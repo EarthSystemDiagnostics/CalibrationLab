@@ -22,7 +22,7 @@ can be matched up afterwards purely by their wall-clock timestamps.
 - **Jupyter** (or any environment that can run `.ipynb`, e.g. JupyterLab / VS Code / Spyder)
 
 ```bash
-pip install pyserial jupyter
+pip install -r requirements.txt
 ```
 
 ## Hardware / wiring
@@ -106,13 +106,8 @@ are always recoverable later.
 
 ## Repository contents
 
-| File                                   | Purpose                                        |
-|----------------------------------------|------------------------------------------------|
-| `Calibration_combined.ipynb`           | **Main** notebook — logs both instruments      |
-| `param_combined.txt`                   | Configuration for the combined notebook        |
-| `legacy/260512_microK056.ipynb`        | Earlier standalone MicroK-only logger (reference) |
-| `legacy/LoggerSensor_automised_groups.ipynb` | Earlier standalone NTC logger (reference) |
-| `legacy/param.txt`, `legacy/paramMicroK.txt` | Config files for the legacy notebooks    |
-
-The `legacy/` notebooks are the original single-instrument scripts, kept for
-reference. The combined notebook supersedes both.
+| File                         | Purpose                                   |
+|------------------------------|-------------------------------------------|
+| `Calibration_combined.ipynb` | **Main** notebook — logs both instruments |
+| `param_combined.txt`         | Configuration for the combined notebook   |
+| `requirements.txt`           | Python dependencies                       |
