@@ -1,24 +1,24 @@
 # ============================================================
-#  Kombiniertes Kalibrier-Logging  -  Parameterdatei
-#  Format:   schluessel: wert       (Reihenfolge egal, '#' = Kommentar)
-#  Wird von Calibration_combined.ipynb gelesen (MicroK + NTC-Logger).
+#  Combined calibration logging  -  parameter file
+#  Format:   key: value          (order does not matter, '#' = comment)
+#  Read by calibration_log.py (MicroK + SchwaRTech/AWI Temperature head).
 # ============================================================
 
-# Experimentname (kommt in die Dateinamen)
+# Experiment name (goes into the output file names)
 experiment: Snowmelt_Retest5Sensors
 
-# ---- MicroK-Bridge (SPRT-Referenz) ----
-# Kanaele:   Referenz ; SPRT1 [ ; SPRT2 ]
+# ---- MicroK bridge (SPRT reference) ----
+# Channels:   Reference ; SPRT1 [ ; SPRT2 ]
 microk_channels: 1;2
-# Port-Vorauswahl (optional; leer lassen = keine Vorauswahl)
+# Optional port pre-selection (leave empty for no pre-selection)
 microk_port: usbserial-A922BJHF
 
-# ---- Temperatur-/NTC-Logger (Arduino) ----
-# Was auslesen (Auswahl aus: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+# ---- SchwaRTech/AWI Temperature head (NTCs) ----
+# What to read out (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
 ntc_readout: NTC1;NTC2;TestSB
-# Sensoren pro Gruppe ; Messpunkte pro Gruppe
+# Sensors per group ; measurement points per group
 ntc_groups: 5;60
-# Node-IDs der Sensoren
+# Sensor node IDs
 ntc_nodes: 90;91;92;93;94
-# Port-Vorauswahl (optional)
+# Optional port pre-selection
 ntc_port: usbserial-FT3GCNKB0

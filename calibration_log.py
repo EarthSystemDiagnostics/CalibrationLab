@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Kombiniertes Kalibrier-Logging (MicroK + SchwaRTech/AWI Temperature head) als Command-Line-Tool.
+Combined calibration logging (MicroK + SchwaRTech/AWI Temperature head) as a command-line tool.
 
-Liest beide seriellen Geraete parallel (je ein Thread) und schreibt pro Lauf drei
-Dateien nach ./Output/:  <exp>_<zeit>_microk.txt, _ntc.txt, _meta.txt
+Reads both serial instruments in parallel (one thread each) and writes three files
+per run to ./Output/:  <exp>_<time>_microk.txt, _ntc.txt, _meta.txt
 
-Aufruf:
-    python calibration_log.py                 # nutzt param_combined.txt
-    python calibration_log.py --param x.txt    # andere Konfig
-    python calibration_log.py --exp Testlauf   # Experimentname ueberschreiben
+Usage:
+    python3 calibration_log.py                 # uses param_combined.txt
+    python3 calibration_log.py --param x.txt    # different config file
+    python3 calibration_log.py --exp Testrun    # override the experiment name
 
-Stoppen: Ctrl-C  -> beide Threads beenden sauber und schliessen die Ports.
+Stop: Ctrl-C  -> both threads shut down cleanly and close their ports.
 """
 
 import os
@@ -25,10 +25,10 @@ import serial.tools.list_ports
 
 
 # --------------------------------------------------------------------------
-# Konfiguration
+# Configuration
 # --------------------------------------------------------------------------
 def read_config(param_path, exp_override=None):
-    """Liest die minimale key:value-Parameterdatei und leitet die Konfig ab."""
+    """Read the minimal key:value parameter file and derive the configuration."""
     cfg = {}
     with open(param_path, "r") as file:
         for line in file:
@@ -45,12 +45,12 @@ def read_config(param_path, exp_override=None):
     c["exp"] = exp_override or cfg["experiment"]
 
     # --- MicroK ---
-    microk_channels = as_list("microk_channels")   # Referenz; SPRT1[; SPRT2]
+    microk_channels = as_list("microk_channels")   # reference; SPRT1[; SPRT2]
     c["ref_ch"]      = microk_channels[0]
     c["sprt_chs"]    = microk_channels[1:]
     c["microk_hint"] = cfg.get("microk_port", "")
 
-    # --- Logger ---
+    # --- Temperature head ---
     c["logger_hint"]    = cfg.get("ntc_port", "")
     c["active"]         = as_list("ntc_readout")
     _g = as_list("ntc_groups")
@@ -81,16 +81,16 @@ def read_config(param_path, exp_override=None):
 
 
 # --------------------------------------------------------------------------
-# Serielle Ports zur Laufzeit auswaehlen
+# Select serial ports at runtime
 # --------------------------------------------------------------------------
 def pick_port(role, hint):
-    """Fragt nach dem Port-Index. Enter = Vorauswahl anhand 'hint' aus der Konfig."""
+    """Ask for the port index. Enter = pre-selection based on 'hint' from the config."""
     ports = list(serial.tools.list_ports.comports())
-    print("\nErkannte serielle Ports:")
+    print("\nDetected serial ports:")
     for idx, p in enumerate(ports):
         print(f"  [{idx}]  {p.device}   |   {p.description}   |   {p.hwid}")
     default_idx = next((i for i, p in enumerate(ports) if hint and hint in p.device), None)
-    prompt = f"Index fuer {role}"
+    prompt = f"Index for {role}"
     if default_idx is not None:
         prompt += f"  [Enter = {default_idx}: {ports[default_idx].device}]"
     prompt += ": "
@@ -100,29 +100,29 @@ def pick_port(role, hint):
             return ports[default_idx].device
         if choice.isdigit() and int(choice) < len(ports):
             return ports[int(choice)].device
-        print("  Ungueltig - bitte eine der Indexnummern oben eingeben.")
+        print("  Invalid - please enter one of the index numbers above.")
 
 
 # --------------------------------------------------------------------------
-# Worker: je ein Geraet, eigener Serial-Port, eigene Datei
+# Workers: one device each, own serial port, own file
 # --------------------------------------------------------------------------
 def microk_worker(stop_event, c, microk_port, microk_file):
     try:
         ser = serial.Serial(microk_port, 9600, serial.EIGHTBITS,
                              serial.PARITY_NONE, serial.STOPBITS_ONE, timeout=2)
     except Exception as e:
-        print("[MicroK] Port-FEHLER:", e)
+        print("[MicroK] Port ERROR:", e)
         return
-    print("[MicroK] Port offen :", microk_port)
+    print("[MicroK] Port open :", microk_port)
     queries = [(ch, f"MEAS:RAT{ch}:REF{c['ref_ch']}? 100,0.56 \r\n") for ch in c["sprt_chs"]]
     if not queries:
-        print("[MicroK] Keine SPRT-Kanaele konfiguriert -> nichts zu messen.")
+        print("[MicroK] No SPRT channels configured -> nothing to measure.")
         ser.close()
         return
     start = time.time()
     n = 0
-    print("[MicroK] Datei      :", microk_file)
-    print("[MicroK] Warte auf Daten ...")
+    print("[MicroK] File      :", microk_file)
+    print("[MicroK] Waiting for data ...")
     try:
         with open(microk_file, "a") as f:
             while not stop_event.is_set():
@@ -140,7 +140,7 @@ def microk_worker(stop_event, c, microk_port, microk_file):
                     print(f"[MicroK] #{n} Ch{ch}: {data}")
     finally:
         ser.close()
-        print("[MicroK] gestoppt, Port geschlossen.")
+        print("[MicroK] stopped, port closed.")
 
 
 def logger_worker(stop_event, c, logger_port, logger_file):
@@ -148,30 +148,30 @@ def logger_worker(stop_event, c, logger_port, logger_file):
         ser = serial.Serial(logger_port, 19200, serial.EIGHTBITS,
                              serial.PARITY_NONE, serial.STOPBITS_ONE, timeout=1)
     except Exception as e:
-        print("[TempLogger] Port-FEHLER:", e)
+        print("[TempHead] Port ERROR:", e)
         return
-    print("[TempLogger] Port offen :", logger_port)
+    print("[TempHead] Port open :", logger_port)
     Nr_MeasPoints = c["Nr_MeasPoints"]
     headers = c["headers"]
     commands_groupNTCs = c["commands_groupNTCs"]
     try:
-        # --- Temperature head aufwecken und konfigurieren ---
-        print("[TempLogger] Wecke Kopf, warte auf Antwort ...")
+        # --- wake up and configure the temperature head ---
+        print("[TempHead] Waking head, waiting for response ...")
         ser.write("help\r\n".encode("ascii"))
         received = ""
         while not any(ch.isalpha() for ch in received) and not stop_event.is_set():
             received = ser.readline().decode("utf-8", "replace")
-        print("[TempLogger] Kopf ist wach.")
+        print("[TempHead] Head is awake.")
         time.sleep(3)
         ser.write("LIVE \r\n".encode("ascii")); time.sleep(3)
         ser.write("nodes on \r\n".encode("ascii")); time.sleep(2); time.sleep(3)
         for command in c["on_commands"] + c["off_commands"]:
-            print("[TempLogger] sende:", command.strip())
+            print("[TempHead] sending:", command.strip())
             ser.write(command.encode("ascii")); time.sleep(5)
 
         start = datetime.now()
-        print("[TempLogger] Datei      :", logger_file)
-        print("[TempLogger] Warte auf Messdaten ...")
+        print("[TempHead] File      :", logger_file)
+        print("[TempHead] Waiting for measurement data ...")
         with open(logger_file, "a") as fh:
             while not stop_event.is_set():
                 for g_idx in range(len(headers)):
@@ -187,38 +187,38 @@ def logger_worker(stop_event, c, logger_port, logger_file):
                         data_values = received.strip()
                         now = datetime.now()
                         sec = (now - start).total_seconds()
-                        if "New Node Array:" in received:      # neue Node-Gruppe bestaetigt
+                        if "New Node Array:" in received:      # new node group confirmed
                             r = True
                             fh.write(f"Group{g_idx+1}; {headers[g_idx]}\r\n")
                         if r:
                             fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                             fh.flush()
                             i += 1
-                            print(f"[TempLogger] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}")
+                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}")
     finally:
         ser.close()
-        print("[TempLogger] gestoppt, Port geschlossen.")
+        print("[TempHead] stopped, port closed.")
 
 
 # --------------------------------------------------------------------------
-# Meta-Datei
+# Meta file
 # --------------------------------------------------------------------------
 def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description):
     with open(meta_file, "w") as m:
         m.write(f"Experiment       : {c['exp']}\n")
-        m.write(f"Beschreibung     : {description}\n")
-        m.write(f"Start (PC-Zeit)  : {datetime.now()}\n")
-        m.write(f"Run-Stempel      : {run_stamp}\n")
-        m.write("\n--- Aufgeloeste Einstellungen ---\n")
-        m.write(f"MicroK-Port      : {microk_port}\n")
-        m.write(f"MicroK-Kanaele   : Referenz={c['ref_ch']}  SPRT={c['sprt_chs']}\n")
-        m.write(f"TempLogger-Port  : {logger_port}\n")
-        m.write(f"NTC-Readout      : {c['active']}\n")
-        m.write(f"Gruppen          : {c['Nr_NTCs_group']} Sensoren/Gruppe, {c['Nr_MeasPoints']} Messpunkte\n")
-        m.write(f"Node-IDs         : {c['Logger_sensorNo']}\n")
-        m.write(f"MicroK-Datei     : {microk_file}\n")
-        m.write(f"NTC-Datei        : {logger_file}\n")
-        m.write("\n--- Woertliche Kopie der Parameterdatei ---\n")
+        m.write(f"Description      : {description}\n")
+        m.write(f"Start (PC time)  : {datetime.now()}\n")
+        m.write(f"Run stamp        : {run_stamp}\n")
+        m.write("\n--- Resolved settings ---\n")
+        m.write(f"MicroK port      : {microk_port}\n")
+        m.write(f"MicroK channels  : Reference={c['ref_ch']}  SPRT={c['sprt_chs']}\n")
+        m.write(f"TempHead port    : {logger_port}\n")
+        m.write(f"NTC readout      : {c['active']}\n")
+        m.write(f"Groups           : {c['Nr_NTCs_group']} sensors/group, {c['Nr_MeasPoints']} measurement points\n")
+        m.write(f"Node IDs         : {c['Logger_sensorNo']}\n")
+        m.write(f"MicroK file      : {microk_file}\n")
+        m.write(f"NTC file         : {logger_file}\n")
+        m.write("\n--- Verbatim copy of the parameter file ---\n")
         with open(param_path) as p:
             m.write(p.read())
 
@@ -227,29 +227,29 @@ def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, 
 # main
 # --------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description="Kombiniertes MicroK + NTC Kalibrier-Logging")
-    ap.add_argument("--param", default="param_combined.txt", help="Pfad zur Parameterdatei")
-    ap.add_argument("--exp", default=None, help="Experimentname ueberschreiben")
+    ap = argparse.ArgumentParser(description="Combined MicroK + NTC calibration logging")
+    ap.add_argument("--param", default="param_combined.txt", help="path to the parameter file")
+    ap.add_argument("--exp", default=None, help="override the experiment name")
     args = ap.parse_args()
 
     c = read_config(args.param, exp_override=args.exp)
 
     print("Experiment :", c["exp"])
-    print("MicroK     : Ref", c["ref_ch"], "| SPRT", c["sprt_chs"], "| Hint", c["microk_hint"])
-    print("Logger     : readout", c["active"], "| nodes", c["Logger_sensorNo"], "| Hint", c["logger_hint"])
+    print("MicroK     : Ref", c["ref_ch"], "| SPRT", c["sprt_chs"], "| hint", c["microk_hint"])
+    print("TempHead   : readout", c["active"], "| nodes", c["Logger_sensorNo"], "| hint", c["logger_hint"])
     print("on-cmds    :", [x.strip() for x in c["on_commands"]])
     print("group-cmds :", [x.strip() for x in c["commands_groupNTCs"]])
 
-    # Beschreibung der Kalibration (Freitext bis Enter) -> kommt in die Meta-Datei
-    description = input("\nBeschreibung der Kalibration (Enter zum Bestaetigen): ").strip()
+    # Free-text description of the calibration (until Enter) -> goes into the meta file
+    description = input("\nDescription of this calibration (press Enter to confirm): ").strip()
 
-    # Ports interaktiv waehlen
-    microk_port = pick_port("MicroK-Bridge (9600 Baud)", c["microk_hint"])
-    logger_port = pick_port("SchwaRTech/AWI Temperature head (19200 Baud)", c["logger_hint"])
-    print("\nGewaehlt  MicroK ->", microk_port)
-    print("Gewaehlt  Logger ->", logger_port)
+    # Select ports interactively
+    microk_port = pick_port("MicroK bridge (9600 baud)", c["microk_hint"])
+    logger_port = pick_port("SchwaRTech/AWI Temperature head (19200 baud)", c["logger_hint"])
+    print("\nSelected  MicroK   ->", microk_port)
+    print("Selected  TempHead ->", logger_port)
 
-    # Dateinamen
+    # File names
     os.makedirs("Output", exist_ok=True)
     run_stamp   = time.strftime("%Y%m%d-%H%M%S")
     microk_file = f"Output/{c['exp']}_{run_stamp}_microk.txt"
@@ -257,29 +257,29 @@ def main():
     meta_file   = f"Output/{c['exp']}_{run_stamp}_meta.txt"
 
     write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description)
-    print("Meta-Datei geschrieben:", meta_file)
+    print("Meta file written:", meta_file)
 
-    # Threads starten
+    # Start threads
     stop_event = threading.Event()
     t_micro  = threading.Thread(target=microk_worker,
                                 args=(stop_event, c, microk_port, microk_file),
                                 daemon=True, name="MicroK")
     t_logger = threading.Thread(target=logger_worker,
                                 args=(stop_event, c, logger_port, logger_file),
-                                daemon=True, name="Logger")
+                                daemon=True, name="TempHead")
     t_micro.start()
     t_logger.start()
-    print("\nBeide Logger laufen parallel. Stoppen mit Ctrl-C.")
+    print("\nBoth loggers running in parallel. Stop with Ctrl-C.")
 
     try:
         while t_micro.is_alive() or t_logger.is_alive():
             time.sleep(0.5)
     except KeyboardInterrupt:
-        print("\nStoppe beide ...")
+        print("\nStopping both ...")
         stop_event.set()
         t_micro.join(timeout=15)
         t_logger.join(timeout=15)
-        print("Fertig. Dateien liegen in ./Output/")
+        print("Done. Files are in ./Output/")
 
 
 if __name__ == "__main__":
