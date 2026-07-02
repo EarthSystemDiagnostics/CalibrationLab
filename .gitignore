@@ -1,0 +1,15 @@
+# Measurement output (data, not code)
+Output/
+
+# macOS
+.DS_Store
+
+# Claude Code local files
+.claude/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc

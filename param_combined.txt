@@ -1,0 +1,24 @@
+# ============================================================
+#  Kombiniertes Kalibrier-Logging  -  Parameterdatei
+#  Format:   schluessel: wert       (Reihenfolge egal, '#' = Kommentar)
+#  Wird von Calibration_combined.ipynb gelesen (MicroK + NTC-Logger).
+# ============================================================
+
+# Experimentname (kommt in die Dateinamen)
+experiment: Snowmelt_Retest5Sensors
+
+# ---- MicroK-Bridge (SPRT-Referenz) ----
+# Kanaele:   Referenz ; SPRT1 [ ; SPRT2 ]
+microk_channels: 1;2
+# Port-Vorauswahl (optional; leer lassen = keine Vorauswahl)
+microk_port: usbserial-A922BJHF
+
+# ---- Temperatur-/NTC-Logger (Arduino) ----
+# Was auslesen (Auswahl aus: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+ntc_readout: NTC1;NTC2;TestSB
+# Sensoren pro Gruppe ; Messpunkte pro Gruppe
+ntc_groups: 5;60
+# Node-IDs der Sensoren
+ntc_nodes: 90;91;92;93;94
+# Port-Vorauswahl (optional)
+ntc_port: usbserial-FT3GCNKB0

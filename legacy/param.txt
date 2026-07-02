@@ -1,0 +1,26 @@
+# Experiment Name:
+Snowmelt_Retest5Sensors
+#########################################
+### Calibration Bath settings:
+# Minutes interval temperature setpoints:
+3
+# Fluke temperatures
+12;12;8
+#########################################
+### MicroK (Bridge) settings:
+# Port:
+usbserial-A922BJHF
+# Readout commands bridge (Channel Reference; Channel SPRT1; Channel SPRT2)
+1;2
+##(unused) ZeroPower: on/off
+off
+########################################
+### LoggerSensor Settings:
+#Port:
+usbserial-FT3GCNKB0
+# What to read out (TempADC; NTC1; NTC2; TestSB; TestN; GND; PRESSURE):
+NTC1; NTC2; TestSB
+# group organization (Number ob Sensors; Number of readouts per group):
+5;60
+# Nodes:
+90;91;92;93;94
