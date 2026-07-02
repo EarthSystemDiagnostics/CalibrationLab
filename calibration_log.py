@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Kombiniertes Kalibrier-Logging (MicroK + Arduino-NTC-Logger) als Command-Line-Tool.
+Kombiniertes Kalibrier-Logging (MicroK + SchwaRTech/AWI Temperature head) als Command-Line-Tool.
 
 Liest beide seriellen Geraete parallel (je ein Thread) und schreibt pro Lauf drei
 Dateien nach ./Output/:  <exp>_<zeit>_microk.txt, _ntc.txt, _meta.txt
@@ -155,7 +155,7 @@ def logger_worker(stop_event, c, logger_port, logger_file):
     headers = c["headers"]
     commands_groupNTCs = c["commands_groupNTCs"]
     try:
-        # --- Arduino/Kopf aufwecken und konfigurieren ---
+        # --- Temperature head aufwecken und konfigurieren ---
         print("[TempLogger] Wecke Kopf, warte auf Antwort ...")
         ser.write("help\r\n".encode("ascii"))
         received = ""
@@ -245,7 +245,7 @@ def main():
 
     # Ports interaktiv waehlen
     microk_port = pick_port("MicroK-Bridge (9600 Baud)", c["microk_hint"])
-    logger_port = pick_port("Arduino-Logger (19200 Baud)", c["logger_hint"])
+    logger_port = pick_port("SchwaRTech/AWI Temperature head (19200 Baud)", c["logger_hint"])
     print("\nGewaehlt  MicroK ->", microk_port)
     print("Gewaehlt  Logger ->", logger_port)
 

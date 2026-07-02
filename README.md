@@ -4,7 +4,7 @@ Parallel data logging for thermistor (NTC) calibration against an SPRT reference
 Two serial instruments are read **simultaneously** by a small command-line logger:
 
 - **Isotech MicroK** precision resistance bridge — reads the **SPRT** (reference thermometer).
-- **Arduino-based sensor head** — reads the **NTCs** (and optional test channels).
+- **SchwaRTech/AWI Temperature head** — reads the **NTCs** (and optional test channels).
 
 Both streams are timestamped (`datetime`) on every line, so the two data files
 can be matched up afterwards purely by their wall-clock timestamps.
@@ -29,10 +29,10 @@ python3 -m pip install -r requirements.txt
 
 ## Hardware / wiring
 
-| Instrument            | Typical USB adapter      | Baud  |
-|-----------------------|--------------------------|-------|
-| MicroK bridge (SPRT)  | FTDI FT232R (single)     | 9600  |
-| Arduino sensor head   | FTDI FT2232H (dual, ch0) | 19200 |
+| Instrument                    | Typical USB adapter      | Baud  |
+|-------------------------------|--------------------------|-------|
+| MicroK bridge (SPRT)          | FTDI FT232R (single)     | 9600  |
+| SchwaRTech/AWI Temperature head | FTDI FT2232H (dual, ch0) | 19200 |
 
 The exact `/dev/cu.usbserial-*` names can change between sessions — the script
 lets you **pick the port interactively at runtime** (see below).
@@ -51,7 +51,7 @@ python3 calibration_log.py --exp Testlauf   # override the experiment name
 
 At startup the script:
 1. lists the detected serial ports and asks you to pick which one is the MicroK
-   and which is the Arduino logger (press **Enter** to accept the pre-selection
+   and which is the SchwaRTech/AWI Temperature head (press **Enter** to accept the pre-selection
    from the config);
 2. asks for a **free-text description of the calibration** (until Enter) — this is
    stored in the `_meta.txt` file;
@@ -99,7 +99,7 @@ ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 | `ntc_readout`     | Which sensor channels to log                                   |
 | `ntc_groups`      | `sensors_per_group ; measurement_points_per_group`             |
 | `ntc_nodes`       | Sensor node IDs                                                |
-| `ntc_port`        | Optional Arduino port hint (pre-selection only)                |
+| `ntc_port`        | Optional Temperature-head port hint (pre-selection only)       |
 
 ---
 
