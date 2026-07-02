@@ -39,23 +39,38 @@ lets you **pick the port interactively at runtime** (see below).
 
 ## Usage
 
-1. Edit **`param_combined.txt`** (see format below).
-2. Open **`Calibration_combined.ipynb`** and run the cells top to bottom:
-   - **Cell 3** reads `param_combined.txt`.
-   - **Cell 4** lists the detected serial ports and asks you to pick which one is
-     the MicroK and which is the Arduino logger. Press **Enter** to accept the
-     pre-selection taken from `param_combined.txt`, or type the index number.
-   - **Cell 6** starts both logging threads.
-3. Watch the live output — you should see, e.g.:
-   ```
-   [MicroK] Port offen : /dev/cu.usbserial-A922BJHF
-   [TempLogger] Kopf ist wach.
-   [MicroK] #1 Ch2: <value>
-   [TempLogger] G1 1/63: <values>
-   ...
-   ```
-4. **Stop** by interrupting the kernel (Interrupt / Stop button). Both threads
-   shut down cleanly and close their serial ports.
+Two equivalent front-ends share the same logging logic. Edit **`param_combined.txt`**
+first (see format below), then pick one:
+
+### Option A — command-line script (recommended for real runs)
+
+```bash
+python calibration_log.py                 # uses param_combined.txt
+python calibration_log.py --param x.txt    # different config file
+python calibration_log.py --exp Testlauf   # override the experiment name
+```
+
+The script lists the detected serial ports and asks you to pick which one is the
+MicroK and which is the Arduino logger (press **Enter** to accept the pre-selection
+from the config). Then both logging threads start. **Stop with `Ctrl-C`** — both
+threads shut down cleanly and close their ports. Robust for long, unattended runs
+(e.g. inside `tmux`/`nohup` over SSH).
+
+### Option B — Jupyter notebook (for interactive tinkering)
+
+Open **`Calibration_combined.ipynb`** and run the cells top to bottom (Cell 3 reads
+the config, Cell 4 selects the ports, Cell 6 starts both threads). **Stop** by
+interrupting the kernel.
+
+### Live output (both front-ends)
+
+```
+[MicroK] Port offen : /dev/cu.usbserial-A922BJHF
+[TempLogger] Kopf ist wach.
+[MicroK] #1 Ch2: <value>
+[TempLogger] G1 1/63: <values>
+...
+```
 
 Output files can be **copied at any time while logging** — every line is
 `flush()`ed to disk immediately, so a copy always contains all completed lines.
@@ -106,8 +121,9 @@ are always recoverable later.
 
 ## Repository contents
 
-| File                         | Purpose                                   |
-|------------------------------|-------------------------------------------|
-| `Calibration_combined.ipynb` | **Main** notebook — logs both instruments |
-| `param_combined.txt`         | Configuration for the combined notebook   |
-| `requirements.txt`           | Python dependencies                       |
+| File                         | Purpose                                         |
+|------------------------------|-------------------------------------------------|
+| `calibration_log.py`         | **Command-line logger** (recommended for runs)  |
+| `Calibration_combined.ipynb` | Notebook version — same logic, interactive      |
+| `param_combined.txt`         | Configuration for both front-ends               |
+| `requirements.txt`           | Python dependencies                             |
