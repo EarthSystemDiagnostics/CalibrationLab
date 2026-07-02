@@ -203,9 +203,10 @@ def logger_worker(stop_event, c, logger_port, logger_file):
 # --------------------------------------------------------------------------
 # Meta-Datei
 # --------------------------------------------------------------------------
-def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, logger_file, run_stamp):
+def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description):
     with open(meta_file, "w") as m:
         m.write(f"Experiment       : {c['exp']}\n")
+        m.write(f"Beschreibung     : {description}\n")
         m.write(f"Start (PC-Zeit)  : {datetime.now()}\n")
         m.write(f"Run-Stempel      : {run_stamp}\n")
         m.write("\n--- Aufgeloeste Einstellungen ---\n")
@@ -239,6 +240,9 @@ def main():
     print("on-cmds    :", [x.strip() for x in c["on_commands"]])
     print("group-cmds :", [x.strip() for x in c["commands_groupNTCs"]])
 
+    # Beschreibung der Kalibration (Freitext bis Enter) -> kommt in die Meta-Datei
+    description = input("\nBeschreibung der Kalibration (Enter zum Bestaetigen): ").strip()
+
     # Ports interaktiv waehlen
     microk_port = pick_port("MicroK-Bridge (9600 Baud)", c["microk_hint"])
     logger_port = pick_port("Arduino-Logger (19200 Baud)", c["logger_hint"])
@@ -252,7 +256,7 @@ def main():
     logger_file = f"Output/{c['exp']}_{run_stamp}_ntc.txt"
     meta_file   = f"Output/{c['exp']}_{run_stamp}_meta.txt"
 
-    write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file, run_stamp)
+    write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description)
     print("Meta-Datei geschrieben:", meta_file)
 
     # Threads starten

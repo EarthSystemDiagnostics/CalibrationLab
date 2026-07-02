@@ -1,7 +1,7 @@
 # SPRT–NTC Calibration Logging
 
 Parallel data logging for thermistor (NTC) calibration against an SPRT reference.
-Two serial instruments are read **simultaneously** from a single Jupyter notebook:
+Two serial instruments are read **simultaneously** by a small command-line logger:
 
 - **Isotech MicroK** precision resistance bridge — reads the **SPRT** (reference thermometer).
 - **Arduino-based sensor head** — reads the **NTCs** (and optional test channels).
@@ -18,12 +18,14 @@ can be matched up afterwards purely by their wall-clock timestamps.
 
 - **macOS** (serial ports are addressed as `/dev/cu.*`)
 - **Python 3**
-- **[pyserial](https://pyserial.readthedocs.io/)** — `pip install pyserial`
-- **Jupyter** (or any environment that can run `.ipynb`, e.g. JupyterLab / VS Code / Spyder)
+- **[pyserial](https://pyserial.readthedocs.io/)**
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
+
+> If `import serial` fails, make sure it is **pyserial** (`python3 -m pip install pyserial`)
+> and not the unrelated PyPI package also called `serial`.
 
 ## Hardware / wiring
 
@@ -32,37 +34,33 @@ pip install -r requirements.txt
 | MicroK bridge (SPRT)  | FTDI FT232R (single)     | 9600  |
 | Arduino sensor head   | FTDI FT2232H (dual, ch0) | 19200 |
 
-The exact `/dev/cu.usbserial-*` names can change between sessions — the notebook
+The exact `/dev/cu.usbserial-*` names can change between sessions — the script
 lets you **pick the port interactively at runtime** (see below).
 
 ---
 
 ## Usage
 
-Two equivalent front-ends share the same logging logic. Edit **`param_combined.txt`**
-first (see format below), then pick one:
-
-### Option A — command-line script (recommended for real runs)
+Edit **`param_combined.txt`** first (see format below), then run:
 
 ```bash
-python calibration_log.py                 # uses param_combined.txt
-python calibration_log.py --param x.txt    # different config file
-python calibration_log.py --exp Testlauf   # override the experiment name
+python3 calibration_log.py                 # uses param_combined.txt
+python3 calibration_log.py --param x.txt    # different config file
+python3 calibration_log.py --exp Testlauf   # override the experiment name
 ```
 
-The script lists the detected serial ports and asks you to pick which one is the
-MicroK and which is the Arduino logger (press **Enter** to accept the pre-selection
-from the config). Then both logging threads start. **Stop with `Ctrl-C`** — both
-threads shut down cleanly and close their ports. Robust for long, unattended runs
-(e.g. inside `tmux`/`nohup` over SSH).
+At startup the script:
+1. lists the detected serial ports and asks you to pick which one is the MicroK
+   and which is the Arduino logger (press **Enter** to accept the pre-selection
+   from the config);
+2. asks for a **free-text description of the calibration** (until Enter) — this is
+   stored in the `_meta.txt` file;
+3. starts both logging threads.
 
-### Option B — Jupyter notebook (for interactive tinkering)
+**Stop with `Ctrl-C`** — both threads shut down cleanly and close their ports.
+Robust for long, unattended runs (e.g. inside `tmux`/`nohup` over SSH).
 
-Open **`Calibration_combined.ipynb`** and run the cells top to bottom (Cell 3 reads
-the config, Cell 4 selects the ports, Cell 6 starts both threads). **Stop** by
-interrupting the kernel.
-
-### Live output (both front-ends)
+### Live output
 
 ```
 [MicroK] Port offen : /dev/cu.usbserial-A922BJHF
@@ -121,9 +119,8 @@ are always recoverable later.
 
 ## Repository contents
 
-| File                         | Purpose                                         |
-|------------------------------|-------------------------------------------------|
-| `calibration_log.py`         | **Command-line logger** (recommended for runs)  |
-| `Calibration_combined.ipynb` | Notebook version — same logic, interactive      |
-| `param_combined.txt`         | Configuration for both front-ends               |
-| `requirements.txt`           | Python dependencies                             |
+| File                 | Purpose                        |
+|----------------------|--------------------------------|
+| `calibration_log.py` | Command-line logger            |
+| `param_combined.txt` | Configuration                  |
+| `requirements.txt`   | Python dependencies            |
