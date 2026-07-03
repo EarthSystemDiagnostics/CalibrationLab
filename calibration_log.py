@@ -164,8 +164,11 @@ def logger_worker(stop_event, c, logger_port, logger_file):
     headers = c["headers"]
     commands_groupNTCs = c["commands_groupNTCs"]
     # Column labels per group (drop the "SecondsElapsed; DateTimePC; " prefix) so
-    # we can show the raw NTC1 temperature per node on screen (display only).
+    # we can show the raw NTC temperature per node on screen (display only).
     ntc_header_cols = [h.split(";", 2)[2] for h in headers]
+    # Which readout channels are NTC thermistors -> converted for the live display
+    # (NTC1/NTC2/TestSB, in config order). Non-NTC readouts are not shown.
+    ntc_channels = [ch for ch in c["active"] if ch in ntc.NTC_CHANNELS] or list(ntc.NTC_CHANNELS)
     try:
         # --- wake up and configure the temperature head ---
         print("[TempHead] Waking head, waiting for response ...")
@@ -206,10 +209,11 @@ def logger_worker(stop_event, c, logger_port, logger_file):
                             fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                             fh.flush()
                             i += 1
-                            # On-screen only: raw NTC1 temperature per node, plus a
-                            # warning for any node reading as not connected.
-                            temps = ntc.ntc1_from_row(ntc_header_cols[g_idx], data_values)
-                            tstr = "  ->  " + ntc.format_ntc1(temps) if temps else ""
+                            # On-screen only: raw NTC temperature per node for every
+                            # configured NTC channel, plus a warning for open inputs.
+                            temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
+                                                     channels=ntc_channels)
+                            tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
                             print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
     finally:
         ser.close()

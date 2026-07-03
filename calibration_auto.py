@@ -202,13 +202,13 @@ def sprt_status(microk_file):
     return f"SPRT={temp:+.4f} C ({channel})"
 
 
-def latest_ntc1_temps(ntc_file):
-    """Tail the NTC log and return [(node_label, raw_temp_C), ...] for NTC1 of
-    each node in the most recent measurement row, or None.
+def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
+    """Tail the NTC log and return ntc.ntc_from_row() output for the most recent
+    measurement row -- [(node, [(channel, temp_C_or_None), ...]), ...] -- or None.
 
-    Robust by design: the NTC1 columns are located from the repeated HEADER line
-    (which carries the `Nxx_NTC1` labels), so standalone columns and channel order
-    are handled without assumptions. Rows are split as `Group; secs; datetime;
+    Robust by design: the channel columns are located from the repeated HEADER line
+    (which carries the `Nxx_<channel>` labels), so standalone columns and channel
+    order are handled without assumptions. Rows are split as `Group; secs; datetime;
     datablock` -- a data row has a numeric 2nd field and no `NTC`/`New Node Array`
     text in its datablock (that filters out headers, echoes and meta lines).
     """
@@ -240,23 +240,24 @@ def latest_ntc1_temps(ntc_file):
         header = None
         for i in range(data_idx, -1, -1):            # nearest preceding header, same group
             hp = lines[i].split(";", 3)
-            if len(hp) == 4 and hp[0].strip() == dgroup and "NTC1" in hp[3]:
+            if (len(hp) == 4 and hp[0].strip() == dgroup
+                    and any(("_" + ch) in hp[3] for ch in channels)):
                 header = hp[3]
                 break
         if header is None:
             return None
-        return ntc.ntc1_from_row(header, dblock) or None
+        return ntc.ntc_from_row(header, dblock, channels=channels) or None
     except Exception:
         return None
 
 
-def ntc1_status(ntc_file):
-    """Compact 'NTC1[C] N90=+.. N91=+..' string for status displays; appends a
-    'Nodes not connected' warning for any node whose raw counts are out of range."""
-    res = latest_ntc1_temps(ntc_file)
+def ntc_status(ntc_file, channels=ntc.NTC_CHANNELS):
+    """Compact 'NTC[C] N94: NTC1=.. NTC2=.. TestSB=..' string for status displays;
+    appends a 'Not connected' warning for any open channel."""
+    res = latest_ntc_temps(ntc_file, channels=channels)
     if not res:
-        return "NTC1=--"
-    return "NTC1[C] " + ntc.format_ntc1(res)
+        return "NTC=--"
+    return "NTC[C] " + ntc.format_ntc(res)
 
 
 def interruptible_sleep(seconds, label, extra=None):
@@ -293,9 +294,14 @@ def main():
     c = read_config(args.param, exp_override=args.exp)
     b = read_bath_config(args.param)
 
+    # Which readout channels are NTC thermistors -> live temperature per node.
+    # Keeps the config's order; non-NTC readouts (TempADC/GND/...) are not shown.
+    ntc_channels = [ch for ch in c["active"] if ch in ntc.NTC_CHANNELS] or list(ntc.NTC_CHANNELS)
+
     print("Experiment :", c["exp"])
     print("MicroK     : Ref", c["ref_ch"], "| SPRT", c["sprt_chs"], "| hint", c["microk_hint"])
     print("TempHead   : readout", c["active"], "| nodes", c["Logger_sensorNo"], "| hint", c["logger_hint"])
+    print("NTC->T     : converting channels", ntc_channels)
     enc_desc = "float" if b["use_float"] else f"int{b['decimals']}"
     print("Bath       : protocol", b["protocol"], "| address", b["address"],
           ("| encoding " + enc_desc if b["protocol"] == "modbus" else ""),
@@ -410,9 +416,11 @@ def main():
 
             t_dwell_start = datetime.now()
             # During the dwell, show bath PV/SP, the SPRT temperature, and the raw
-            # NTC1 temperature per node -- the full picture at the plateau.
+            # NTC temperature per node for every configured NTC channel -- the full
+            # picture at the plateau.
             dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
-                                    f"{sprt_status(microk_file)} | {ntc1_status(logger_file)}")
+                                    f"{sprt_status(microk_file)} | "
+                                    f"{ntc_status(logger_file, ntc_channels)}")
             interruptible_sleep(minutes * 60, f"plateau {i} dwell", extra=dwell_status)
             t_dwell_end = datetime.now()
 

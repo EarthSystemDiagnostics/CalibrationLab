@@ -368,6 +368,26 @@ def test_ntc_disconnected_detection_and_format():
     assert allbad == "!! Nodes not connected: N90 N91"
 
 
+def test_ntc_multichannel_conversion_and_format():
+    # NTC1/NTC2/TestSB per node, TestSB open on N96.
+    hdr = ("N94_NTC1 | N94_NTC2 | N94_TestSB || "
+           "N96_NTC1 | N96_NTC2 | N96_TestSB")
+    data = ("5812827 | 5540969 | 4952001 || "
+            "4540193 | 5812827 | 16777216")               # N96/TestSB open
+    rows = ntc.ntc_from_row(hdr, data)                     # default NTC_CHANNELS
+    d = dict(rows)
+    # channel order preserved, all three present for N94
+    assert [ch for ch, _ in d["N94"]] == ["NTC1", "NTC2", "TestSB"]
+    assert abs(dict(d["N94"])["NTC1"] - (-46.661)) < 0.01
+    assert dict(d["N96"])["TestSB"] is None               # open input -> None
+    out = ntc.format_ntc(rows)
+    assert "N94: NTC1=" in out and "NTC2=" in out and "TestSB=" in out
+    assert "!! Not connected: N96/TestSB" in out
+    # channel subset works and skips the rest
+    only1 = ntc.ntc_from_row(hdr, data, channels=("NTC1",))
+    assert [ch for ch, _ in dict(only1)["N94"]] == ["NTC1"]
+
+
 def test_ntc1_from_row_as_used_by_legacy_worker():
     # calibration_log.py passes the header with its "SecondsElapsed; DateTimePC; "
     # prefix stripped, and the raw head line as the data block.
@@ -380,14 +400,21 @@ def test_ntc1_from_row_as_used_by_legacy_worker():
     assert ntc.ntc1_from_row(cols, "New Node Array: 94 96") == []  # meta line
 
 
+def _chan(res):
+    """[(node,[(ch,t)])] -> {node: {ch: t}} for concise assertions."""
+    return {node: dict(chans) for node, chans in res}
+
+
 def test_ntc1_parser_simple(tmp="/tmp/_test_ntc_a.txt"):
     open(tmp, "w").write(
         "Group1; SecondsElapsed; DateTimePC; N90_NTC1 | N90_NTC2 | N90_TestSB || N91_NTC1 | N91_NTC2 | N91_TestSB\n"
         "Group1; 0.05; 2026-07-02 16:00:00.0; New Node Array: 90 91\n"
-        "Group1; 9.19; 2026-07-02 16:00:09.1; 5812827 | 100 | 200 || 4540193 | 300 | 400\n")
-    res = dict(ca.latest_ntc1_temps(tmp))
-    assert abs(res["N90"] - (-46.661)) < 0.01      # from 5812827
-    assert abs(res["N91"] - (-39.454)) < 0.01      # from 4540193, NOT the NTC2 col
+        "Group1; 9.19; 2026-07-02 16:00:09.1; 5812827 | 5540969 | 4952001 || 4540193 | 300 | 400\n")
+    d = _chan(ca.latest_ntc_temps(tmp))            # all NTC channels
+    assert abs(d["N90"]["NTC1"] - (-46.661)) < 0.01
+    assert abs(d["N90"]["NTC2"] - (-45.173)) < 0.01   # second channel converted too
+    assert abs(d["N90"]["TestSB"] - (-41.867)) < 0.01 # TestSB is an NTC as well
+    assert abs(d["N91"]["NTC1"] - (-39.454)) < 0.01
 
 
 def test_ntc1_parser_standalone_and_order(tmp="/tmp/_test_ntc_b.txt"):
@@ -396,9 +423,9 @@ def test_ntc1_parser_standalone_and_order(tmp="/tmp/_test_ntc_b.txt"):
     open(tmp, "w").write(
         "Group1; SecondsElapsed; DateTimePC; TempADC || N90_NTC2 | N90_NTC1 || N91_NTC2 | N91_NTC1\n"
         "Group1; 9.19; 2026-07-02 16:00:09.1; 999 || 111 | 5812827 || 222 | 4540193\n")
-    res = dict(ca.latest_ntc1_temps(tmp))
-    assert abs(res["N90"] - (-46.661)) < 0.01
-    assert abs(res["N91"] - (-39.454)) < 0.01
+    d = _chan(ca.latest_ntc_temps(tmp, channels=("NTC1",)))
+    assert abs(d["N90"]["NTC1"] - (-46.661)) < 0.01
+    assert abs(d["N91"]["NTC1"] - (-39.454)) < 0.01
 
 
 def test_ntc1_parser_multigroup_picks_latest(tmp="/tmp/_test_ntc_c.txt"):
@@ -407,13 +434,13 @@ def test_ntc1_parser_multigroup_picks_latest(tmp="/tmp/_test_ntc_c.txt"):
         "Group1; 1.0; 2026-07-02 16:00:01.0; 5812827 || 5812827\n"
         "Group2; SecondsElapsed; DateTimePC; N95_NTC1 || N96_NTC1\n"
         "Group2; 2.0; 2026-07-02 16:00:02.0; 4540193 || 4540193\n")
-    res = ca.latest_ntc1_temps(tmp)                # last row is Group2
+    res = ca.latest_ntc_temps(tmp, channels=("NTC1",))   # last row is Group2
     assert [n for n, _ in res] == ["N95", "N96"]
-    assert all(abs(t - (-39.454)) < 0.01 for _, t in res)
+    assert all(abs(dict(chans)["NTC1"] - (-39.454)) < 0.01 for _, chans in res)
 
 
 def test_ntc1_status_no_data():
-    assert ca.ntc1_status("/tmp/_ntc_missing_xyz.txt") == "NTC1=--"
+    assert ca.ntc_status("/tmp/_ntc_missing_xyz.txt") == "NTC=--"
 
 
 def test_sprt_tail_status(tmp="/tmp/_test_microk.txt"):

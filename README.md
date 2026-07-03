@@ -80,9 +80,10 @@ files keep the raw values only — the display conversion never touches them):
 ```
 
 The MicroK line adds the **SPRT temperature** (`sprt.py`); the head line adds the
-**raw NTC1 temperature per node** (`ntc.py`). Both use the nominal R-workflow
-formulas and are for orientation only — the file contents are unchanged, so the R
-calibration pipeline is unaffected.
+**raw NTC temperature per node for every configured NTC channel** — `NTC1`, `NTC2`
+and `TestSB` (which is wired as a second NTC) — via `ntc.py`. Both use the nominal
+R-workflow formulas and are for orientation only — the file contents are unchanged,
+so the R calibration pipeline is unaffected.
 
 A node whose raw counts exceed `10_000_000` (open input) is reported as
 `!! Nodes not connected: N91` instead of a temperature.
@@ -234,7 +235,8 @@ encoding or baud/parity (in `bath.py`) is off — see the header notes.
 `<experiment>_<time>_plateaus.txt` records each plateau's setpoint and timestamps
 (commanded / stable / measurement start+end) so the stable window can be sliced
 out afterwards. The live status line shows bath PV/SP, the **SPRT temperature**
-(via `sprt.py`) **and** the **raw NTC1 temperature per node** (via `ntc.py`) so you
+(via `sprt.py`) **and** the **raw NTC temperature per node for each NTC channel**
+(NTC1/NTC2/TestSB, via `ntc.py`) so you
 see the whole picture at a plateau. Both conversions are **display only** and use
 the nominal formulas from the R workflow — SPRT: the 2-point ratio calibration;
 NTC: `NTCcounts2temp` (β=3380, R25=10 kΩ), i.e. uncalibrated raw temperature. The

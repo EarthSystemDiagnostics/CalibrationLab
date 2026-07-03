@@ -22,6 +22,12 @@ T25           = 298.15          # 25 C in Kelvin
 # Raw counts above this mean an open input -> the node/sensor is not connected.
 DISCONNECTED_COUNTS = 10_000_000
 
+# The head channels that are actually NTC thermistors and can be converted to a
+# temperature with the formula above. TestSB is wired as a second NTC (NTC2), so
+# it converts the same way. TempADC/TestN/GND/PRESSURE are NOT thermistors and
+# are never temperature-converted.
+NTC_CHANNELS = ("NTC1", "NTC2", "TestSB")
+
 
 def is_connected(counts):
     """True if the raw counts look like a real, connected sensor."""
@@ -105,6 +111,65 @@ def format_ntc1(pairs):
     if disconnected:
         parts.append("!! Nodes not connected: " + " ".join(disconnected))
     return "  ".join(parts)
+
+
+def ntc_from_row(header_cols, data_block, channels=NTC_CHANNELS):
+    """Like ntc1_from_row but for SEVERAL NTC channels per node.
+
+    Returns [(node_label, [(channel, temp_C_or_None), ...]), ...] in header order.
+    For each node the requested `channels` (default NTC1/NTC2/TestSB) are located
+    by their `Nxx_<channel>` label and converted to temperature. A channel whose
+    raw counts exceed DISCONNECTED_COUNTS yields temp None (flagged as not
+    connected by format_ntc); a connected-but-uncomputable channel is omitted.
+    Returns [] if header and data don't line up.
+    """
+    hsegs, dsegs = _cells(header_cols), _cells(data_block)
+    if len(hsegs) != len(dsegs):
+        return []
+    out = []
+    for hseg, dseg in zip(hsegs, dsegs):
+        node_map, node_order = {}, []
+        for j, label in enumerate(hseg):
+            for ch in channels:
+                if label.endswith("_" + ch) and j < len(dseg):
+                    node = label[:-len("_" + ch)]
+                    if node not in node_map:
+                        node_map[node], _ = {}, node_order.append(node)
+                    try:
+                        counts = float(dseg[j])
+                    except ValueError:
+                        break
+                    if not is_connected(counts):
+                        node_map[node][ch] = None            # not connected
+                    else:
+                        t = counts_to_temp_c(counts)
+                        if t is not None:
+                            node_map[node][ch] = t
+                    break
+        for node in node_order:
+            chans = [(ch, node_map[node][ch]) for ch in channels if ch in node_map[node]]
+            out.append((node, chans))
+    return out
+
+
+def format_ntc(rows):
+    """Format ntc_from_row() output for a status line, all channels per node:
+    'N94: NTC1=-13.0 NTC2=-13.0 TestSB=-12.9   N96: ...' plus a
+    '!! Not connected: N94/TestSB ...' warning for any open channel."""
+    parts, disconnected = [], []
+    for node, chans in rows:
+        vals = []
+        for ch, t in chans:
+            if t is None:
+                disconnected.append(f"{node}/{ch}")
+            else:
+                vals.append(f"{ch}={t:+.3f}")
+        if vals:
+            parts.append(f"{node}: " + " ".join(vals))
+    line = "   ".join(parts)
+    if disconnected:
+        line += ("   " if line else "") + "!! Not connected: " + " ".join(disconnected)
+    return line
 
 
 if __name__ == "__main__":
