@@ -169,9 +169,11 @@ class BisynchBath:
         self.sp_mnem = setpoint_mnemonic
 
     # -- low level -------------------------------------------------------
-    def _read_num(self, mnemonic, retries=3):
+    def _read_num(self, mnemonic, retries=5):
         """Read a mnemonic and parse it as a float; retry a few times because a
-        single Bisynch frame can be lost on a shared/noisy bus."""
+        single Bisynch frame can be lost on a shared/noisy bus. NOTE: only ONE
+        process may use the serial port at a time -- two readers corrupt each
+        other's replies and this will raise despite the retries."""
         last = None
         for _ in range(retries):
             val = self.dev.read_param(self.address, mnemonic)
@@ -182,9 +184,10 @@ class BisynchBath:
                     last = val
             time.sleep(0.05)
         raise IOError(f"no valid {mnemonic!r} reading from Bisynch addr "
-                      f"{self.address} (last={last!r})")
+                      f"{self.address} (last={last!r}). Is another program using "
+                      f"the port? Only one at a time.")
 
-    def _write_num(self, mnemonic, value, retries=3):
+    def _write_num(self, mnemonic, value, retries=5):
         text = f"{float(value):.{self.decimals}f}"
         for _ in range(retries):
             if self.dev.write_param(self.address, mnemonic, text):
