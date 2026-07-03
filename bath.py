@@ -356,6 +356,50 @@ def scan(port, slave_max=16,
     return found
 
 
+# Registers worth probing to identify a controller. Covers both the 2000-series
+# convention (PV=1) and the 3500-series map (PV=289; from the minimalmodbus
+# eurotherm3500 driver), plus loop 2.
+PROBE_REGISTERS = [
+    (1,    "2000-series PV / instrument value"),
+    (289,  "3500 loop1 PV"),
+    (2,    "loop1 target setpoint"),
+    (5,    "loop1 working setpoint"),
+    (3,    "output % (2000)"),
+    (4,    "loop1 output % (3500)"),
+    (24,   "loop1 SP1 (writable)"),
+    (25,   "loop1 SP2"),
+    (273,  "loop1 auto/manual flag"),
+    (1025, "3500 loop2 PV"),
+    (1026, "loop2 target setpoint"),
+    (1029, "loop2 working setpoint"),
+    (1048, "loop2 SP1"),
+]
+
+
+def probe(port, slave, baud, parity):
+    """Read a curated set of registers from one slave and print them. Read-only.
+
+    Use this to identify an unknown controller: a 3500-series controller answers
+    on register 289 (loop1 PV); a 2000-series/limiter answers on register 1 but
+    usually errors on 289. Run it, then change the setpoint on the controller's
+    panel and run again -- the register whose value follows is the live setpoint.
+    """
+    print(f"\nProbing slave {slave} on {port} ({baud}/{parity}), read-only.")
+    print("Match these against the controller's display; raw is the register value,")
+    print("/10 and /100 apply 1 or 2 implied decimals.\n")
+    print(f"  {'reg':>5}  {'raw':>8}  {'/10':>10}  {'/100':>10}   meaning")
+    b = Bath(port, slave=slave, use_float=False, decimals=0, baud=baud,
+             parity=parity, timeout=0.5)
+    for reg, label in PROBE_REGISTERS:
+        try:
+            raw = int(b.instr.read_register(reg, 0, signed=True))
+            print(f"  {reg:5d}  {raw:8d}  {raw/10:+10.2f}  {raw/100:+10.3f}   {label}")
+        except Exception as e:
+            print(f"  {reg:5d}  {'--':>8}  {'':>10}  {'':>10}   {label}  (no data: {type(e).__name__})")
+    print("\nTip: the register that reads a sane PV (and one that follows a panel")
+    print("setpoint change) tells us the controller family and the right map.")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Isotech/Eurotherm bath control & read-out (Modbus RTU, no logging)")
@@ -374,6 +418,9 @@ def main():
     ap.add_argument("--scan-max", type=int, default=16, dest="scan_max",
                     help="highest slave address to try in --scan (default 16; use 247 "
                          "with fixed --baud/--parity to sweep the whole address range)")
+    ap.add_argument("--probe", action="store_true",
+                    help="read-only dump of many registers on --slave to identify the "
+                         "controller (2000-series PV=1 vs 3500-series PV=289)")
     ap.add_argument("--monitor", action="store_true",
                     help="continuously read out PV/SP/OUT until Ctrl-C")
     ap.add_argument("--interval", type=float, default=5.0, help="monitor poll interval [s]")
@@ -406,6 +453,10 @@ def main():
 
     baud = args.baud if args.baud else BAUDRATE
     parity = args.parity if args.parity else PARITY
+
+    if args.probe:
+        probe(port, args.slave, baud, parity)
+        return
     bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals,
                 baud=baud, parity=parity)
 
