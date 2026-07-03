@@ -309,36 +309,42 @@ def run_schedule(bath, plateaus, minutes, ramp, tol, window_min, timeout_min):
         print("\nInterrupted. Bath left at its current setpoint.")
 
 
-def scan(port, slaves=range(1, 8),
+def scan(port, slave_max=16,
          bauds=(9600, 19200, 4800, 38400, 2400, 115200),
          parities=("N", "E", "O")):
-    """Probe serial settings until the controller answers. Read-only.
+    """Probe serial settings until controllers answer. Read-only.
 
-    For a 'No communication with the instrument' error, this sweeps baud x parity
-    x slave address and reports the first combination that gets a Modbus reply
-    (a successful read of the PV register). It changes nothing on the controller.
+    Sweeps baud x parity x slave address (1..slave_max) and reports EVERY Modbus
+    reply (a successful read of the PV register), so multiple devices on one bus
+    are all listed. It changes nothing on any controller.
     """
-    print(f"\nScanning {port} for a responding Modbus slave (read-only) ...")
-    print("If nothing answers at all, the controller is likely in EI-Bisynch mode,")
-    print("has no comms module, or is mis-wired -- see the notes printed at the end.\n")
+    slaves = range(1, slave_max + 1)
+    print(f"\nScanning {port} for responding Modbus slaves (read-only), "
+          f"addresses 1..{slave_max} ...")
+    print("Each device reports its PV; a bath has several devices (main Eurotherm")
+    print("controller + over-temperature limiter), so expect more than one.\n")
     found = []
     for baud in bauds:
         for parity in parities:
+            print(f"  trying baud={baud} parity={parity} ...")
             for slave in slaves:
                 try:
                     b = Bath(port, slave=slave, use_float=False, decimals=1,
                              baud=baud, parity=parity, timeout=0.3)
                     pv = b.instr.read_register(REG_PV, 1, signed=True)
-                    print(f"  RESPONSE  baud={baud} parity={parity} slave={slave}"
-                          f"   PV(int1)={pv:+.3f}")
+                    sp = b.instr.read_register(REG_SETPOINT_1, 1, signed=True)
+                    print(f"    RESPONSE  baud={baud} parity={parity} slave={slave}"
+                          f"   PV(int1)={pv:+.3f}  SP1={sp:+.3f}")
                     found.append((baud, parity, slave))
                 except Exception:
                     pass                          # no answer with these settings
     if found:
-        baud, parity, slave = found[0]
-        print(f"\n-> Use:  python3 bath.py --port {port} --baud {baud} "
-              f"--parity {parity} --slave {slave} --monitor")
-        print("   (then pick --encoding int1/int2/float by checking the PV value)")
+        print(f"\n{len(found)} device(s) answered. To tell them apart, --monitor each")
+        print("and change the setpoint on the EUROTHERM front panel: the address whose")
+        print("SP1/target follows your change is the bath controller (write to that one).")
+        for baud, parity, slave in found:
+            print(f"  python3 bath.py --port {port} --baud {baud} "
+                  f"--parity {parity} --slave {slave} --monitor")
     else:
         print("\nNo response on any combination. Most likely one of:")
         print("  * controller comms set to EI-Bisynch, not Modbus (switch it in the")
@@ -364,6 +370,8 @@ def main():
     # Modes (pick one; default = print current state once)
     ap.add_argument("--scan", action="store_true",
                     help="read-only probe of baud/parity/slave to find what answers")
+    ap.add_argument("--scan-max", type=int, default=16, dest="scan_max",
+                    help="highest slave address to try in --scan (default 16)")
     ap.add_argument("--monitor", action="store_true",
                     help="continuously read out PV/SP/OUT until Ctrl-C")
     ap.add_argument("--interval", type=float, default=5.0, help="monitor poll interval [s]")
@@ -387,7 +395,7 @@ def main():
     port = args.port or pick_port("bath controller", hint="usbserial")
 
     if args.scan:
-        scan(port)
+        scan(port, slave_max=args.scan_max)
         return
 
     bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals,
