@@ -232,6 +232,10 @@ class BisynchBath:
         Pass 0/None to switch the rate limit OFF (approach as fast as possible)."""
         self._write_num("RR", 0 if c_per_min is None else c_per_min)
 
+    def read_ramp_rate(self):
+        """The configured setpoint rate limit (RR). 0 == off (max speed)."""
+        return self._read_num("RR")
+
     def wait_until_stable(self, target, tol=0.005, window_s=120,
                           poll_s=5.0, timeout_s=3600, verbose=True, extra=None):
         """Block until PV is within +/-tol of target for window_s. Returns True,
@@ -277,13 +281,18 @@ def monitor(port, address=1, baud=9600, interval=5.0):
     b = BisynchBath(port, address=address, baud=baud)
     print(f"\nMonitoring 3504 on {port} addr {address} (every {interval:g} s). "
           f"Ctrl-C to stop.")
-    print(f"{'time':>8}   {'PV [C]':>10}   {'setpoint [C]':>13}   {'OUT [%]':>8}")
+    print("'rate' is the setpoint rate limit RR (0 = off / max speed).")
+    print(f"{'time':>8}   {'PV [C]':>10}   {'setpoint [C]':>13}   {'OUT [%]':>8}   "
+          f"{'rate':>8}")
     t0 = time.time()
     try:
         while True:
             try:
+                rr = b.read_ramp_rate()
+                rate = "off" if rr == 0 else f"{rr:g}"
                 line = (f"{time.time()-t0:8.0f}   {b.read_pv():+10.3f}   "
-                        f"{b.read_setpoint():+13.3f}   {b.read_output():8.1f}")
+                        f"{b.read_setpoint():+13.3f}   {b.read_output():8.1f}   "
+                        f"{rate:>8}")
             except Exception as e:
                 line = f"{time.time()-t0:8.0f}   (read error: {type(e).__name__})"
             print(line)

@@ -344,8 +344,12 @@ def main():
     #     slave/encoding. Abort *before* starting the loggers if it fails. ---
     try:
         bath = make_bath(bath_port, b)
+        rate_str = ""
+        if hasattr(bath, "read_ramp_rate"):
+            rr = bath.read_ramp_rate()
+            rate_str = f"  RAMP={'off' if rr == 0 else f'{rr:g} C/min'}"
         print(f"\nBath connected ({b['protocol']}). PV={bath.read_pv():+.4f} C  "
-              f"SP={bath.read_setpoint():+.4f} C  OUT={bath.read_output():.1f} %")
+              f"SP={bath.read_setpoint():+.4f} C  OUT={bath.read_output():.1f} %{rate_str}")
     except Exception as e:
         sys.exit(
             f"\nCould not talk to the bath controller: {e}\n"
