@@ -22,3 +22,39 @@ ntc_groups: 5;60
 ntc_nodes: 90;91;92;93;94
 # Optional port pre-selection
 ntc_port: usbserial-FT3GCNKB0
+
+# ============================================================
+#  Bath automation  -  ONLY used by calibration_auto.py
+#  (calibration_log.py ignores everything below)
+# ============================================================
+
+# Optional port pre-selection for the Isotech bath controller
+bath_port:         usbserial
+# Modbus slave address (default 1; only differs on a shared bus)
+bath_slave:        1
+# Value encoding of the controller registers -- VERIFY ONCE on the real unit
+# (the --dry-run read-out shows a wrong choice: PV off by a factor of 10):
+#   int1   = scaled integer, 1 decimal  (recommended; e.g. 2503 -> 250.3 C)
+#   int2   = scaled integer, 2 decimals (0.01 C; fine for -80..125 range)
+#   float  = full-resolution IEEE floats (advanced; word order not verified)
+bath_encoding:     int1
+
+# Plateaus in deg C, in run order (1..20 values)
+plateaus:          -40; -20; 0; 20; 40
+
+# Dwell / measurement time in minutes, counted AFTER the bath is stable.
+# One value -> applies to all plateaus.  Or one value per plateau.
+plateau_minutes:   30
+
+# Optional approach ramp in deg C/min. Leave empty for maximum speed (arrival
+# is detected automatically). One value -> all plateaus, or one per plateau.
+ramp_c_per_min:
+
+# Arrival / stability detection
+stability_tol:     0.02        # deg C band around the setpoint
+stability_window:  10          # minutes PV must stay in band before measuring
+# Max wait for stability SCALES with the step size: this many minutes per 10 K
+# the bath has to travel (measured from the current PV). If it is still not
+# stable when the timeout elapses, the run measures anyway and moves on.
+stability_timeout_per_10k: 30  # minutes per 10 K
+stability_timeout_min:     15  # floor in minutes for small/zero steps

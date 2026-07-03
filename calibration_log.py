@@ -23,6 +23,9 @@ from datetime import datetime
 import serial
 import serial.tools.list_ports
 
+import sprt   # SPRT ratio -> temperature (on-screen display only)
+import ntc    # NTC raw counts -> temperature (on-screen display only)
+
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -137,7 +140,13 @@ def microk_worker(stop_event, c, microk_port, microk_file):
                     t_min = (time.time() - start) / 60
                     f.write(f"{t_min};{datetime.now()};{data};0.56mA;Channel{ch};{n}\n")
                     f.flush()
-                    print(f"[MicroK] #{n} Ch{ch}: {data}")
+                    # On-screen only: also show the converted SPRT temperature.
+                    try:
+                        t_c = sprt.ratio_to_temp_c(float(data), f"Channel{ch}")
+                        tstr = f"  ->  {t_c:+.4f} C"
+                    except ValueError:
+                        tstr = ""
+                    print(f"[MicroK] #{n} Ch{ch}: {data}{tstr}")
     finally:
         ser.close()
         print("[MicroK] stopped, port closed.")
@@ -154,6 +163,9 @@ def logger_worker(stop_event, c, logger_port, logger_file):
     Nr_MeasPoints = c["Nr_MeasPoints"]
     headers = c["headers"]
     commands_groupNTCs = c["commands_groupNTCs"]
+    # Column labels per group (drop the "SecondsElapsed; DateTimePC; " prefix) so
+    # we can show the raw NTC1 temperature per node on screen (display only).
+    ntc_header_cols = [h.split(";", 2)[2] for h in headers]
     try:
         # --- wake up and configure the temperature head ---
         print("[TempHead] Waking head, waiting for response ...")
@@ -194,7 +206,11 @@ def logger_worker(stop_event, c, logger_port, logger_file):
                             fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                             fh.flush()
                             i += 1
-                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}")
+                            # On-screen only: raw NTC1 temperature per node.
+                            temps = ntc.ntc1_from_row(ntc_header_cols[g_idx], data_values)
+                            tstr = ("  ->  " + " ".join(f"{node}={t:+.3f}" for node, t in temps)
+                                    if temps else "")
+                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
     finally:
         ser.close()
         print("[TempHead] stopped, port closed.")

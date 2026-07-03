@@ -1,1 +1,2 @@
 pyserial
+minimalmodbus   # only needed for bath.py (Eurotherm/Modbus bath control)
