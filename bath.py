@@ -422,6 +422,57 @@ def probe(port, slave, baud, parity):
     print("setpoint change) tells us the controller family and the right map.")
 
 
+def regscan(port, slave, baud, parity, start=0, stop=1024, targets=(-17.0, -15.0),
+            tol=1.5):
+    """Read EVERY holding register start..stop on ONE slave and print the ones
+    that decode to a plausible bath temperature. Read-only.
+
+    The idea: the device that answers (the over-temp limiter at slave 2) may be a
+    comms GATEWAY that also mirrors the 3504's values at HIGHER register addresses
+    we never probed. So we sweep the whole block and flag registers whose /10 or
+    /100 value looks like a temperature -- especially near the known bath PV
+    (~-17) and 3504 setpoint (-15). Those registers are how we reach the 3504.
+
+    `targets` are the panel values to hunt for; a HIT means "this register holds
+    that number" -> candidate for the 3504's PV / setpoint.
+    """
+    print(f"\nRegister sweep on slave {slave} @ {port} ({baud}/{parity}), "
+          f"registers {start}..{stop}, read-only.")
+    print(f"Flagging values that look like a temperature (-80..130 C); '<<' marks a")
+    print(f"value within {tol} C of a target {targets}. This can find the 3504's")
+    print("PV/setpoint mirrored on this device.\n")
+    b = Bath(port, slave=slave, use_float=False, decimals=0, baud=baud,
+             parity=parity, timeout=0.3)
+    hits, plausible = [], 0
+    for reg in range(start, stop + 1):
+        try:
+            raw = int(b.instr.read_register(reg, 0, signed=True))
+        except Exception:
+            continue                       # illegal/absent register -> skip quietly
+        for scale, label in ((10.0, "/10"), (100.0, "/100")):
+            val = raw / scale
+            if -80.0 <= val <= 130.0:
+                near = min((abs(val - t), t) for t in targets)
+                flag = f"  << ~{near[1]:+g}" if near[0] <= tol else ""
+                if flag or -30.0 <= val <= 40.0:      # keep the noise down
+                    print(f"  reg {reg:5d}  raw={raw:8d}  {label}={val:+8.2f} C{flag}")
+                plausible += 1
+                if flag:
+                    hits.append((reg, raw, label, val))
+                break
+    print(f"\n{plausible} register(s) decoded to a plausible temperature; "
+          f"{len(hits)} matched a target.")
+    if hits:
+        print("Candidate registers for the 3504 (change the 3504 panel setpoint and")
+        print("re-run -- the one that FOLLOWS the change is the live setpoint):")
+        for reg, raw, label, val in hits:
+            print(f"  reg {reg}  ({label}={val:+g} C)")
+    else:
+        print("Nothing matched the target temperatures. The 3504 is likely NOT")
+        print("mirrored on this device -- try the EI-Bisynch scan (bisynch.py --scan).")
+    return hits
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Isotech/Eurotherm bath control & read-out (Modbus RTU, no logging)")
@@ -443,6 +494,14 @@ def main():
     ap.add_argument("--probe", action="store_true",
                     help="read-only dump of many registers on --slave to identify the "
                          "controller (2000-series PV=1 vs 3500-series PV=289)")
+    ap.add_argument("--regscan", action="store_true",
+                    help="read-only sweep of ALL registers on --slave, flagging ones "
+                         "that look like a bath temperature (finds a 3504 mirrored on "
+                         "a gateway device)")
+    ap.add_argument("--reg-start", type=int, default=0, dest="reg_start",
+                    help="first register for --regscan (default 0)")
+    ap.add_argument("--reg-stop", type=int, default=1024, dest="reg_stop",
+                    help="last register for --regscan (default 1024)")
     ap.add_argument("--monitor", action="store_true",
                     help="continuously read out PV/SP/OUT until Ctrl-C")
     ap.add_argument("--interval", type=float, default=5.0, help="monitor poll interval [s]")
@@ -478,6 +537,10 @@ def main():
 
     if args.probe:
         probe(port, args.slave, baud, parity)
+        return
+    if args.regscan:
+        regscan(port, args.slave, baud, parity,
+                start=args.reg_start, stop=args.reg_stop)
         return
     bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals,
                 baud=baud, parity=parity)
