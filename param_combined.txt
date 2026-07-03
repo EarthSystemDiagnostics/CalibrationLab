@@ -50,12 +50,12 @@ plateaus:          -40; -20; 0; 20; 40
 # One value -> applies to all plateaus.  Or one value per plateau.
 plateau_minutes:   30
 
-# Approach ramp in deg C/min. At MAX speed the Libra 785 overshoots (e.g. a
-# -35 -> -20 step swings to ~-19), so a rate limit is recommended. One value ->
-# all plateaus, or one per plateau. Leave empty only if you want max speed.
-# Tune per bath: start at 5, lower to 2-3 if it still overshoots. NOTE: verify the
-# controller's rate-limit UNIT is deg C/min (not /hour) -- watch --monitor once.
-ramp_c_per_min: 5
+# Approach ramp in deg C/min. The Libra 785 slews only ~2 C/min at full power and
+# still overshoots ~2 C (dead time + PID), so the rate limit ONLY helps when set
+# BELOW ~2 -- a value >=2 does nothing. Overshoot ~= dead_time x rate, so 1 -> ~1 C,
+# 0.5 -> ~0.5 C. Trade-off: slower transitions (a 60 K step at 1 C/min ~= 1 h).
+# One value -> all plateaus, or one per plateau. Empty -> max speed (overshoots).
+ramp_c_per_min: 1
 
 # Arrival / stability detection
 # NOTE: the Libra 785's own PV fluctuates ~+/-0.03 C short-term, so a band tighter
