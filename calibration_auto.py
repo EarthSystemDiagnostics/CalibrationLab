@@ -39,7 +39,7 @@ import sys
 import time
 import argparse
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Reuse the legacy logging machinery unchanged.
 from calibration_log import (
@@ -169,6 +169,8 @@ def open_plateaus_file(path, b):
              f"timeout={b['timeout_per_10k']} min/10K (floor {b['timeout_floor']} min)\n")
     fh.write("# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; "
              "t_dwell_start; t_dwell_end; stable_ok\n")
+    fh.write("# each row is written when its dwell STARTS (survives Ctrl-C); "
+             "t_dwell_end is the planned end = t_dwell_start + dwell.\n")
     fh.flush()
     return fh
 
@@ -423,6 +425,15 @@ def main():
                       f"Measuring anyway -- check this plateau afterwards.")
 
             t_dwell_start = datetime.now()
+            t_dwell_end   = t_dwell_start + timedelta(minutes=minutes)  # planned end
+            # Write the plateau row NOW, at the START of the measurement window, and
+            # flush -- so the window is on disk immediately and survives a Ctrl-C
+            # during a long dwell (t_dwell_end is the planned end = start + dwell;
+            # for a completed plateau it matches the actual end within milliseconds).
+            pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
+                     f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; {ok}\n")
+            pf.flush()
+
             # During the dwell, show bath PV/SP, the SPRT temperature, and the raw
             # NTC temperature per node for every configured NTC channel -- the full
             # picture at the plateau.
@@ -430,11 +441,6 @@ def main():
                                     f"{sprt_status(microk_file)} | "
                                     f"{ntc_status(logger_file, ntc_channels)}")
             interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
-            t_dwell_end = datetime.now()
-
-            pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
-                     f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; {ok}\n")
-            pf.flush()
             print(f"  {tag} done.")
 
         print("\nAll plateaus complete. Stopping loggers ...")
