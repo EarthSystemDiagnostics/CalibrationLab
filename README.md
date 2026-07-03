@@ -180,9 +180,24 @@ Group1; SecondsElapsed; DateTimePC; …          ← header repeats each cycle
 ## Automated bath-driven runs — `calibration_auto.py`
 
 Same logging as the legacy tool, but it also steps the **Isotech Libra 785** bath
-through a list of temperature plateaus. Isotech baths use a Eurotherm 2000-series
-controller speaking **Modbus over RS232** (the same path Isotech's own *Cal
-NotePad* uses); `bath.py` wraps that controller.
+through a list of temperature plateaus.
+
+**How this bath is actually wired (verified on the unit).** The Libra 785 has
+**two controllers on one serial line**, addressed separately and answered by the
+PC master one request at a time (never simultaneously — the master switches byte
+framing per request, exactly as Isotech's *Cal NotePad* does):
+
+| Controller | Role | Protocol | Framing | Address |
+|---|---|---|---|---|
+| **Eurotherm 3504** | main **CONTROLLER** — bath setpoint & PV | **EI-Bisynch** | **7E1** | **1** |
+| Isotech "OVER TEMPERATURE" | safety limiter (read its temp only) | Modbus RTU | 8N1 | 2 |
+
+So the bath is driven over **EI-Bisynch** (`bisynch.py`), *not* Modbus. Mnemonics
+in use: `PV` (measured), `SL` (writable setpoint), `OP` (% output), `RR` (ramp
+rate). `bath.py` (Modbus) still reads the over-temp limiter and remains available
+for other Isotech units whose controller is configured for Modbus.
+`calibration_auto.py` picks the path via the `bath_protocol` config key
+(default `bisynch`).
 
 ```bash
 python3 -m pip install -r requirements.txt      # now also installs minimalmodbus
@@ -204,9 +219,14 @@ python3 bath.py --plateaus "-40;-20;0;20" --minutes 15   # run a ramp/plateau sc
 python3 bath.py --plateaus "0;25;50" --ramp-rate 5       # limited approach ramp (5 C/min)
 ```
 
-Common flags: `--encoding float|int1|int2|int3` (value scaling, default `float`),
+Common flags: `--encoding float|int1|int2|int3` (value scaling, default `int1`),
 `--slave N`, `--tol`, `--window`, `--timeout`. If PV/SP read back wrong, the
 encoding or baud/parity (in `bath.py`) is off — see the header notes.
+
+> **Note:** on the Libra 785, `bath.py` (Modbus) only reaches the **over-temp
+> limiter** (slave 2). To drive the bath itself use the **EI-Bisynch** path —
+> `bisynch.py` for one-off commands, or `calibration_auto.py` with
+> `bath_protocol: bisynch` (default) for a full run.
 
 **Per plateau (`calibration_auto.py`):** (optional ramp →) set setpoint → wait until the bath is stable
 (PV inside `stability_tol` for `stability_window` minutes) → measure for
@@ -230,8 +250,9 @@ Bath-automation config keys (in `param_combined.txt`, ignored by the legacy tool
 | Key                 | Meaning                                                          |
 |---------------------|------------------------------------------------------------------|
 | `bath_port`         | Optional bath-controller port hint (pre-selection only)          |
-| `bath_slave`        | Modbus slave address (default `1`)                               |
-| `bath_encoding`     | `float` \| `int1` \| `int2` \| `int3` — register value scaling   |
+| `bath_protocol`     | `bisynch` (default; the 3504) \| `modbus` (Series-2000 units)    |
+| `bath_address`      | Bisynch GID/UID address (the 3504 = `1`) / Modbus slave address  |
+| `bath_encoding`     | **Modbus only:** `float`\|`int1`\|`int2`\|`int3` register scaling |
 | `plateaus`          | 1–20 setpoints in °C, in run order (`;`-separated)               |
 | `plateau_minutes`   | Dwell after stability; one value → all, or one per plateau       |
 | `ramp_c_per_min`    | Optional approach ramp; empty → max speed; one → all, or per pl. |
@@ -254,10 +275,22 @@ python3 bath.py --port /dev/cu.usbserial-XXXX --scan
 
 It tries baud × parity × slave address and prints the first combination that
 answers, e.g. `--baud 9600 --parity N --slave 1`. Once found, pass those flags to
-the normal read-out. If **nothing** answers, the controller is likely in
-**EI-Bisynch** mode (switch it to Modbus in the controller's comms menu), has **no
-comms module** fitted, or the RS422/RS232 converter (ISO-232-432) / wiring is the
-problem — `bath.py --scan` prints this checklist too.
+the normal read-out.
+
+If **only the over-temp limiter** answers Modbus (or nothing does), the main
+controller is on **EI-Bisynch**, not Modbus — that is the normal Libra 785 case.
+Find it read-only with the Bisynch scanner:
+
+```bash
+python3 bisynch.py --port /dev/cu.usbserial-XXXX --scan       # find framing + address
+python3 bisynch.py --port ... --identify --addr 1             # map the mnemonics vs the panel
+python3 bisynch.py --port ... --addr 1 --read PV              # read the measured temperature
+python3 bisynch.py --port ... --addr 1 --write SL -15         # command a setpoint (changes the bath!)
+```
+
+`--scan` sweeps the Bisynch framings (7E1/7O1/8E1/8N1) × addresses and reports
+what answers; on this bath it is **7E1, address 1**. `--identify` reads the common
+mnemonics so you can match them against the 3504 front panel before writing.
 
 ---
 
@@ -268,7 +301,8 @@ problem — `bath.py --scan` prints this checklist too.
 |-----------------------|-----------------------------------------------------|
 | `calibration_log.py`  | Legacy logger (manual bath setpoints)               |
 | `calibration_auto.py` | Automated logger + bath plateau control             |
-| `bath.py`             | Isotech/Eurotherm bath control (Modbus RTU)         |
+| `bath.py`             | Modbus RTU read-out (over-temp limiter; Series-2000 units) |
+| `bisynch.py`          | EI-Bisynch control of the Eurotherm 3504 (the bath driver) |
 | `sprt.py`             | SPRT ratio → temperature (live display)             |
 | `ntc.py`              | NTC raw counts → temperature (live display)         |
 | `test_bath.py`        | Offline test suite (in-process fake slave)          |

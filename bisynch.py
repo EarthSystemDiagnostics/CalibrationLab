@@ -149,6 +149,125 @@ def identify(port, address=1, baud=9600, bytesize=7, parity="E"):
     return found
 
 
+class BisynchBath:
+    """High-level bath controller over EI-Bisynch, API-compatible with bath.Bath.
+
+    This is what actually drives an Isotech bath whose Eurotherm 3504 speaks
+    EI-Bisynch (7E1) -- confirmed on the Libra 785: PV/SL/SP/OP/RR all answer at
+    address 1. calibration_auto.py can use this or bath.Bath interchangeably.
+
+    Mnemonics used:  PV (measured), SL (writable setpoint), OP (% output),
+    RR (setpoint ramp rate, deg C/min; 0 = off).
+    """
+
+    def __init__(self, port, address=1, baud=9600, bytesize=7, parity="E",
+                 timeout=0.4, decimals=2, setpoint_mnemonic="SL"):
+        self.dev = EIBisynch(port, baud=baud, bytesize=bytesize, parity=parity,
+                             timeout=timeout)
+        self.address = address
+        self.decimals = decimals
+        self.sp_mnem = setpoint_mnemonic
+
+    # -- low level -------------------------------------------------------
+    def _read_num(self, mnemonic, retries=3):
+        """Read a mnemonic and parse it as a float; retry a few times because a
+        single Bisynch frame can be lost on a shared/noisy bus."""
+        last = None
+        for _ in range(retries):
+            val = self.dev.read_param(self.address, mnemonic)
+            if val:
+                try:
+                    return float(val)
+                except ValueError:
+                    last = val
+            time.sleep(0.05)
+        raise IOError(f"no valid {mnemonic!r} reading from Bisynch addr "
+                      f"{self.address} (last={last!r})")
+
+    def _write_num(self, mnemonic, value, retries=3):
+        text = f"{float(value):.{self.decimals}f}"
+        for _ in range(retries):
+            if self.dev.write_param(self.address, mnemonic, text):
+                return True
+            time.sleep(0.05)
+        return False
+
+    # -- high level (mirrors bath.Bath) ----------------------------------
+    def read_pv(self):
+        """Current bath temperature (process value) in deg C."""
+        return self._read_num("PV")
+
+    def read_setpoint(self):
+        """The commanded target setpoint (the mnemonic set_setpoint writes)."""
+        return self._read_num(self.sp_mnem)
+
+    def read_working_setpoint(self):
+        """Working setpoint. The 3504 answers 'SP'; fall back to the target SP."""
+        try:
+            return self._read_num("SP")
+        except IOError:
+            return self._read_num(self.sp_mnem)
+
+    def read_output(self):
+        """Heater/cooler output in %."""
+        return self._read_num("OP")
+
+    def set_setpoint(self, temperature, verify=True, tol=0.2):
+        """Command a new setpoint (deg C) via SL and read it back to confirm.
+
+        Returns True if the read-back matches within `tol`. A missing ACK or a
+        mismatch usually means the controller is in local/held mode."""
+        ack = self._write_num(self.sp_mnem, temperature)
+        if not verify:
+            return ack
+        readback = self._read_num(self.sp_mnem)
+        ok = ack and abs(readback - temperature) <= tol
+        if not ok:
+            print(f"  !! setpoint read-back {readback:+.3f} C != commanded "
+                  f"{temperature:+.3f} C (ack={ack}) -- controller in local/hold?")
+        return ok
+
+    def set_ramp_rate(self, c_per_min):
+        """Limit the setpoint approach rate to `c_per_min` deg C/min via RR.
+        Pass 0/None to switch the rate limit OFF (approach as fast as possible)."""
+        self._write_num("RR", 0 if c_per_min is None else c_per_min)
+
+    def wait_until_stable(self, target, tol=0.005, window_s=120,
+                          poll_s=5.0, timeout_s=3600, verbose=True, extra=None):
+        """Block until PV is within +/-tol of target for window_s. Returns True,
+        or False if timeout_s elapses first. Identical semantics to bath.Bath."""
+        def suffix():
+            if extra is None:
+                return ""
+            try:
+                return "   " + extra()
+            except Exception:
+                return ""
+
+        t0 = time.time()
+        in_band_since = None
+        while time.time() - t0 < timeout_s:
+            pv = self.read_pv()
+            in_band = abs(pv - target) <= tol
+            now = time.time()
+            if in_band:
+                in_band_since = in_band_since or now
+                held = now - in_band_since
+                if verbose:
+                    print(f"  PV={pv:+.4f}  in band, held {held:5.0f}/{window_s}s{suffix()}")
+                if held >= window_s:
+                    return True
+            else:
+                in_band_since = None
+                if verbose:
+                    print(f"  PV={pv:+.4f}  (target {target:+.4f}, off by {pv-target:+.4f}){suffix()}")
+            time.sleep(poll_s)
+        return False
+
+    def close(self):
+        self.dev.close()
+
+
 def scan(port, addr_max=31, baud=9600, mnemonic="PV"):
     """Try every framing x address; report any EI-Bisynch device that answers."""
     print(f"\nEI-Bisynch scan on {port} (baud {baud}, reading '{mnemonic}'), read-only.")

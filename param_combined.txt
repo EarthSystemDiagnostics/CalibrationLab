@@ -29,13 +29,17 @@ ntc_port: usbserial-FT3GCNKB0
 # ============================================================
 
 # Optional port pre-selection for the Isotech bath controller
-bath_port:         usbserial
-# Modbus slave address (default 1; only differs on a shared bus)
-bath_slave:        1
-# Value encoding of the controller registers -- VERIFY ONCE on the real unit
-# (the --dry-run read-out shows a wrong choice: PV off by a factor of 10):
-#   int1   = scaled integer, 1 decimal  (recommended; e.g. 2503 -> 250.3 C)
-#   int2   = scaled integer, 2 decimals (0.01 C; fine for -80..125 range)
+bath_port:         usbserial-FT3GCNKB1
+# Control protocol for the bath's main controller:
+#   bisynch = EI-Bisynch (7E1) -- the Libra 785 Eurotherm 3504 (CONFIRMED here)
+#   modbus  = Modbus RTU (Series-2000 controllers, and the over-temp limiter)
+bath_protocol:     bisynch
+# Device address. Bisynch: GID/UID address (the 3504 answered at 1).
+# Modbus: slave address (the over-temp limiter is at 2).
+bath_address:      1
+# Modbus-ONLY value encoding (ignored for bisynch). VERIFY ONCE on the real unit:
+#   int1   = scaled integer, 1 decimal  (e.g. 2503 -> 250.3 C)
+#   int2   = scaled integer, 2 decimals (0.01 C)
 #   float  = full-resolution IEEE floats (advanced; word order not verified)
 bath_encoding:     int1
 

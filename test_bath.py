@@ -36,7 +36,10 @@ _lp.comports = lambda: []
 _serial.tools = _tools
 _tools.list_ports = _lp
 _serial.EIGHTBITS = 8
+_serial.SEVENBITS = 7
 _serial.PARITY_NONE = "N"
+_serial.PARITY_EVEN = "E"
+_serial.PARITY_ODD = "O"
 _serial.STOPBITS_ONE = 1
 _serial.Serial = object
 sys.modules.update({"serial": _serial,
@@ -286,16 +289,35 @@ def test_scaled_timeout_formula():
 
 
 def test_config_parser_and_expansion(tmp="/tmp/_test_param.txt"):
+    # Modbus path: encoding is honoured.
     open(tmp, "w").write(
         "plateaus: -40; 0; 40\n"
         "plateau_minutes: 20   # inline comment must be stripped\n"
         "ramp_c_per_min: 5\n"
+        "bath_protocol: modbus\n"
+        "bath_slave: 3\n"
         "bath_encoding: int2\n")
     b = ca.read_bath_config(tmp)
     assert b["plateaus"] == [-40.0, 0.0, 40.0]
     assert b["minutes"] == [20.0, 20.0, 20.0]          # single -> all
     assert b["ramps"] == [5.0, 5.0, 5.0]               # single -> all
     assert (b["use_float"], b["decimals"]) == (False, 2)
+    assert b["protocol"] == "modbus" and b["address"] == 3 and b["slave"] == 3
+
+
+def test_config_parser_bisynch_default(tmp="/tmp/_test_param_bi.txt"):
+    # Default protocol is bisynch: encoding is ignored, address defaults to 1.
+    open(tmp, "w").write(
+        "plateaus: 0\n"
+        "plateau_minutes: 5\n")
+    b = ca.read_bath_config(tmp)
+    assert b["protocol"] == "bisynch"
+    assert b["address"] == 1
+    # A bogus encoding must NOT raise under bisynch (it is Modbus-only).
+    open(tmp, "w").write(
+        "plateaus: 0\nplateau_minutes: 5\nbath_encoding: nonsense\n")
+    b = ca.read_bath_config(tmp)
+    assert b["protocol"] == "bisynch"
 
 
 def test_config_parser_errors(tmp="/tmp/_test_param_err.txt"):

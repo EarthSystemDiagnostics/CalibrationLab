@@ -46,8 +46,21 @@ from calibration_log import (
     read_config, pick_port, microk_worker, logger_worker, write_meta,
 )
 from bath import Bath
+from bisynch import BisynchBath
 import sprt
 import ntc
+
+
+def make_bath(bath_port, b):
+    """Construct the right controller for the configured protocol.
+
+    Bisynch (default) drives the Eurotherm 3504 directly; modbus keeps the old
+    Series-2000 path. Both expose the same read_pv/set_setpoint/... interface.
+    """
+    if b["protocol"] == "bisynch":
+        return BisynchBath(bath_port, address=b["address"])
+    return Bath(bath_port, slave=b["slave"], use_float=b["use_float"],
+                decimals=b["decimals"])
 
 
 # --------------------------------------------------------------------------
@@ -76,15 +89,29 @@ def read_bath_config(param_path):
 
     b = {}
     b["port_hint"] = cfg.get("bath_port", "")
-    b["slave"]     = int(cfg.get("bath_slave", "1"))
+    # Which protocol drives the controller. The Isotech Libra 785's Eurotherm 3504
+    # speaks EI-Bisynch (7E1), which is the default. 'modbus' is kept for units /
+    # controllers configured for Modbus RTU (and for the over-temp limiter).
+    b["protocol"] = cfg.get("bath_protocol", "bisynch").lower()
+    if b["protocol"] not in ("bisynch", "modbus"):
+        sys.exit(f"bath_protocol must be 'bisynch' or 'modbus' (got {b['protocol']!r})")
 
+    # Bisynch device address (GID/UID); Modbus slave address. Same key works for both.
+    b["address"] = int(cfg.get("bath_address", cfg.get("bath_slave", "1")))
+    b["slave"]   = b["address"]
+
+    # Encoding is a Modbus-only concept (scaled int vs IEEE float). Bisynch is
+    # ASCII, so it is ignored there; only validated when protocol == modbus.
     enc = cfg.get("bath_encoding", "int1").lower()
-    if enc == "float":
-        b["use_float"], b["decimals"] = True, 1
-    elif enc in ("int0", "int1", "int2", "int3"):
-        b["use_float"], b["decimals"] = False, int(enc[-1])
+    if b["protocol"] == "modbus":
+        if enc == "float":
+            b["use_float"], b["decimals"] = True, 1
+        elif enc in ("int0", "int1", "int2", "int3"):
+            b["use_float"], b["decimals"] = False, int(enc[-1])
+        else:
+            sys.exit(f"bath_encoding must be one of float|int0|int1|int2|int3 (got {enc!r})")
     else:
-        sys.exit(f"bath_encoding must be one of float|int0|int1|int2|int3 (got {enc!r})")
+        b["use_float"], b["decimals"] = False, 1   # unused for bisynch
 
     plateaus = [float(x) for x in as_list("plateaus")]
     if not (1 <= len(plateaus) <= 20):
@@ -269,8 +296,10 @@ def main():
     print("Experiment :", c["exp"])
     print("MicroK     : Ref", c["ref_ch"], "| SPRT", c["sprt_chs"], "| hint", c["microk_hint"])
     print("TempHead   : readout", c["active"], "| nodes", c["Logger_sensorNo"], "| hint", c["logger_hint"])
-    print("Bath       : slave", b["slave"], "| encoding",
-          "float" if b["use_float"] else f"int{b['decimals']}", "| hint", b["port_hint"])
+    enc_desc = "float" if b["use_float"] else f"int{b['decimals']}"
+    print("Bath       : protocol", b["protocol"], "| address", b["address"],
+          ("| encoding " + enc_desc if b["protocol"] == "modbus" else ""),
+          "| hint", b["port_hint"])
     print("Plateaus   :")
     for i, (sp, mn, rp) in enumerate(zip(b["plateaus"], b["minutes"], b["ramps"]), 1):
         ramp = "max speed" if rp is None else f"{rp} C/min"
@@ -281,7 +310,7 @@ def main():
     # Select ports interactively (same helper as the legacy tool).
     microk_port = pick_port("MicroK bridge (9600 baud)", c["microk_hint"])
     logger_port = pick_port("SchwaRTech/AWI Temperature head (19200 baud)", c["logger_hint"])
-    bath_port   = pick_port("Isotech bath controller (Modbus)", b["port_hint"])
+    bath_port   = pick_port(f"Isotech bath controller ({b['protocol']})", b["port_hint"])
     print("\nSelected  MicroK   ->", microk_port)
     print("Selected  TempHead ->", logger_port)
     print("Selected  Bath     ->", bath_port)
@@ -299,8 +328,10 @@ def main():
     with open(meta_file, "a") as m:
         m.write("\n--- Bath automation ---\n")
         m.write(f"Bath port        : {bath_port}\n")
-        m.write(f"Bath slave       : {b['slave']}\n")
-        m.write(f"Bath encoding    : {'float' if b['use_float'] else 'int'+str(b['decimals'])}\n")
+        m.write(f"Bath protocol    : {b['protocol']}\n")
+        m.write(f"Bath address     : {b['address']}\n")
+        if b["protocol"] == "modbus":
+            m.write(f"Bath encoding    : {'float' if b['use_float'] else 'int'+str(b['decimals'])}\n")
         m.write(f"Plateaus (C)     : {b['plateaus']}\n")
         m.write(f"Dwell (min)      : {b['minutes']}\n")
         m.write(f"Ramps (C/min)    : {['max' if r is None else r for r in b['ramps']]}\n")
@@ -312,14 +343,14 @@ def main():
     # --- Connect to the bath first: this is the smoke test for wiring/baud/
     #     slave/encoding. Abort *before* starting the loggers if it fails. ---
     try:
-        bath = Bath(bath_port, slave=b["slave"], use_float=b["use_float"], decimals=b["decimals"])
-        print(f"\nBath connected. PV={bath.read_pv():+.4f} C  "
+        bath = make_bath(bath_port, b)
+        print(f"\nBath connected ({b['protocol']}). PV={bath.read_pv():+.4f} C  "
               f"SP={bath.read_setpoint():+.4f} C  OUT={bath.read_output():.1f} %")
     except Exception as e:
         sys.exit(
             f"\nCould not talk to the bath controller: {e}\n"
-            "Check: RS232 cable/converter, baud+parity in bath.py, slave address, "
-            "and the value encoding (bath_encoding: float vs int1/int2/int3)."
+            "Check: RS232 cable/converter, the bath_protocol (bisynch vs modbus), "
+            "the address, and — for modbus — baud/parity and value encoding."
         )
 
     if args.dry_run:
