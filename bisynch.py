@@ -268,6 +268,32 @@ class BisynchBath:
         self.dev.close()
 
 
+def monitor(port, address=1, baud=9600, interval=5.0):
+    """Continuously print PV / setpoint / output. Pure read-out, changes nothing.
+
+    Handy for watching the bath drive to a new setpoint (e.g. a -35 C flow test):
+    set the setpoint once with --write SL -35, then run --monitor to see it get
+    there. Stop with Ctrl-C."""
+    b = BisynchBath(port, address=address, baud=baud)
+    print(f"\nMonitoring 3504 on {port} addr {address} (every {interval:g} s). "
+          f"Ctrl-C to stop.")
+    print(f"{'time':>8}   {'PV [C]':>10}   {'setpoint [C]':>13}   {'OUT [%]':>8}")
+    t0 = time.time()
+    try:
+        while True:
+            try:
+                line = (f"{time.time()-t0:8.0f}   {b.read_pv():+10.3f}   "
+                        f"{b.read_setpoint():+13.3f}   {b.read_output():8.1f}")
+            except Exception as e:
+                line = f"{time.time()-t0:8.0f}   (read error: {type(e).__name__})"
+            print(line)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        b.close()
+
+
 def scan(port, addr_max=31, baud=9600, mnemonic="PV"):
     """Try every framing x address; report any EI-Bisynch device that answers."""
     print(f"\nEI-Bisynch scan on {port} (baud {baud}, reading '{mnemonic}'), read-only.")
@@ -306,6 +332,10 @@ def main():
     ap.add_argument("--identify", action="store_true",
                     help="read a set of common mnemonics from --addr to find the "
                          "setpoint (read-only)")
+    ap.add_argument("--monitor", action="store_true",
+                    help="continuously read PV/setpoint/output from --addr until Ctrl-C")
+    ap.add_argument("--interval", type=float, default=5.0,
+                    help="seconds between --monitor reads (default 5)")
     ap.add_argument("--addr-max", type=int, default=31, dest="addr_max",
                     help="highest address to try in --scan (default 31)")
     ap.add_argument("--addr", type=int, default=1, help="device address for --read/--write")
@@ -323,6 +353,10 @@ def main():
     if args.identify:
         identify(args.port, address=args.addr, baud=args.baud,
                  bytesize=args.bytesize, parity=args.parity)
+        return
+
+    if args.monitor:
+        monitor(args.port, address=args.addr, baud=args.baud, interval=args.interval)
         return
 
     dev = EIBisynch(args.port, baud=args.baud, bytesize=args.bytesize, parity=args.parity)

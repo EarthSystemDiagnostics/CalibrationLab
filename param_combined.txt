@@ -29,7 +29,7 @@ ntc_port: usbserial-FT3GCNKB0
 # ============================================================
 
 # Optional port pre-selection for the Isotech bath controller
-bath_port:         usbserial-FT3GCNKB1
+bath_port: usbserial-FT3GCNKB1
 # Control protocol for the bath's main controller:
 #   bisynch = EI-Bisynch (7E1) -- the Libra 785 Eurotherm 3504 (CONFIRMED here)
 #   modbus  = Modbus RTU (Series-2000 controllers, and the over-temp limiter)
