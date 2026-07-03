@@ -66,6 +66,11 @@ def make_bath(bath_port, b):
 # --------------------------------------------------------------------------
 # Bath-automation configuration (parsed from the same parameter file)
 # --------------------------------------------------------------------------
+# Upper bound on the number of plateaus -- just a sanity guard against a runaway
+# config, not a hardware limit. Raise it if you genuinely need more.
+MAX_PLATEAUS = 100
+
+
 def read_bath_config(param_path):
     """Parse the bath-automation keys from the parameter file.
 
@@ -114,8 +119,8 @@ def read_bath_config(param_path):
         b["use_float"], b["decimals"] = False, 1   # unused for bisynch
 
     plateaus = [float(x) for x in as_list("plateaus")]
-    if not (1 <= len(plateaus) <= 20):
-        sys.exit("plateaus: give between 1 and 20 temperature values (deg C)")
+    if not (1 <= len(plateaus) <= MAX_PLATEAUS):
+        sys.exit(f"plateaus: give between 1 and {MAX_PLATEAUS} temperature values (deg C)")
     b["plateaus"] = plateaus
     n = len(plateaus)
 
@@ -380,9 +385,11 @@ def main():
     print("\nLoggers running. Starting plateau schedule. Stop anytime with Ctrl-C.\n")
 
     pf = open_plateaus_file(plateau_file, b)
+    n_plateaus = len(b["plateaus"])
     try:
         for i, (sp, minutes, ramp) in enumerate(zip(b["plateaus"], b["minutes"], b["ramps"]), 1):
-            print(f"\n===== Plateau {i}/{len(b['plateaus'])}: setpoint {sp:+.3f} C "
+            tag = f"Plateau {i}/{n_plateaus}"        # progress marker shown everywhere
+            print(f"\n===== {tag}: setpoint {sp:+.3f} C "
                   f"(dwell {minutes:g} min, ramp {'max' if ramp is None else str(ramp)+' C/min'}) =====")
 
             # Timeout scales with how far the bath must travel from where it is
@@ -397,8 +404,9 @@ def main():
             bath.set_setpoint(sp)
             t_command = datetime.now()
 
-            # Live SPRT reading (from the MicroK log) shown next to bath PV/SP.
-            status = lambda: sprt_status(microk_file)
+            # Live SPRT reading (from the MicroK log), tagged with the plateau
+            # progress so you always see where you are while waiting to settle.
+            status = lambda: f"[{tag}] {sprt_status(microk_file)}"
 
             ok = bath.wait_until_stable(
                 sp, tol=b["tol"],
@@ -409,9 +417,9 @@ def main():
             )
             t_stable = datetime.now()
             if ok:
-                print(f"  -> stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
+                print(f"  -> {tag} stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
             else:
-                print(f"  !! NOT stable within {timeout:.0f} min. "
+                print(f"  !! {tag} NOT stable within {timeout:.0f} min. "
                       f"Measuring anyway -- check this plateau afterwards.")
 
             t_dwell_start = datetime.now()
@@ -421,13 +429,13 @@ def main():
             dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
                                     f"{sprt_status(microk_file)} | "
                                     f"{ntc_status(logger_file, ntc_channels)}")
-            interruptible_sleep(minutes * 60, f"plateau {i} dwell", extra=dwell_status)
+            interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
             t_dwell_end = datetime.now()
 
             pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
                      f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; {ok}\n")
             pf.flush()
-            print(f"  Plateau {i} done.")
+            print(f"  {tag} done.")
 
         print("\nAll plateaus complete. Stopping loggers ...")
     except KeyboardInterrupt:

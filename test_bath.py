@@ -324,14 +324,24 @@ def test_config_parser_errors(tmp="/tmp/_test_param_err.txt"):
     def parse(text):
         open(tmp, "w").write(text)
         return ca.read_bath_config(tmp)
+    too_many = ca.MAX_PLATEAUS + 1
     for bad in ("plateaus: 0;1\nplateau_minutes: 5;5;5\n",       # count mismatch
                 "plateau_minutes: 5\n",                            # no plateaus
-                "plateaus: " + ";".join(["1"] * 21) + "\nplateau_minutes: 5\n"):
+                "plateaus: " + ";".join(["1"] * too_many) + "\nplateau_minutes: 5\n"):
         try:
             parse(bad)
             assert False, "bad config should raise SystemExit"
         except SystemExit:
             pass
+
+
+def test_config_parser_allows_more_than_20(tmp="/tmp/_test_param_many.txt"):
+    # The old 20-plateau cap was raised; 30 plateaus must parse fine.
+    open(tmp, "w").write(
+        "plateaus: " + ";".join(str(i) for i in range(30)) + "\nplateau_minutes: 5\n")
+    b = ca.read_bath_config(tmp)
+    assert len(b["plateaus"]) == 30
+    assert len(b["minutes"]) == 30 and len(b["ramps"]) == 30   # expanded to match
 
 
 def test_sprt_anchor_points():

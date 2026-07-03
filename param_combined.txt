@@ -43,7 +43,7 @@ bath_address:      1
 #   float  = full-resolution IEEE floats (advanced; word order not verified)
 bath_encoding:     int1
 
-# Plateaus in deg C, in run order (1..20 values)
+# Plateaus in deg C, in run order (1..100 values)
 plateaus:          -40; -20; 0; 20; 40
 
 # Dwell / measurement time in minutes, counted AFTER the bath is stable.
