@@ -55,7 +55,10 @@ plateau_minutes:   30
 ramp_c_per_min:
 
 # Arrival / stability detection
-stability_tol:     0.02        # deg C band around the setpoint
+# NOTE: the Libra 785's own PV fluctuates ~+/-0.03 C short-term, so a band tighter
+# than that keeps resetting the "held in band" timer. 0.05 lets it settle cleanly;
+# the real measurement stability is judged afterwards from the logged SPRT.
+stability_tol:     0.05        # deg C band around the setpoint
 stability_window:  10          # minutes PV must stay in band before measuring
 # Max wait for stability SCALES with the step size: this many minutes per 10 K
 # the bath has to travel (measured from the current PV). If it is still not
