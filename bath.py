@@ -363,15 +363,17 @@ def main():
     ap.add_argument("--slave", type=int, default=1, help="Modbus slave address (default 1)")
     ap.add_argument("--encoding", default="int1",
                     help="register value encoding: float|int0|int1|int2|int3 (default int1)")
-    ap.add_argument("--baud", type=int, default=BAUDRATE,
-                    help=f"serial baud rate (default {BAUDRATE})")
-    ap.add_argument("--parity", default=PARITY, choices=["N", "E", "O"],
-                    help=f"serial parity (default {PARITY})")
+    ap.add_argument("--baud", type=int, default=None,
+                    help=f"serial baud rate (default {BAUDRATE}); in --scan, fixes the "
+                         "sweep to this baud instead of trying all")
+    ap.add_argument("--parity", default=None, choices=["N", "E", "O"],
+                    help=f"serial parity (default {PARITY}); in --scan, fixes the sweep")
     # Modes (pick one; default = print current state once)
     ap.add_argument("--scan", action="store_true",
                     help="read-only probe of baud/parity/slave to find what answers")
     ap.add_argument("--scan-max", type=int, default=16, dest="scan_max",
-                    help="highest slave address to try in --scan (default 16)")
+                    help="highest slave address to try in --scan (default 16; use 247 "
+                         "with fixed --baud/--parity to sweep the whole address range)")
     ap.add_argument("--monitor", action="store_true",
                     help="continuously read out PV/SP/OUT until Ctrl-C")
     ap.add_argument("--interval", type=float, default=5.0, help="monitor poll interval [s]")
@@ -395,11 +397,17 @@ def main():
     port = args.port or pick_port("bath controller", hint="usbserial")
 
     if args.scan:
-        scan(port, slave_max=args.scan_max)
+        # If baud/parity are given, sweep only those (fast wide address search on a
+        # shared bus where all devices must use the same line settings).
+        bauds = (args.baud,) if args.baud else (9600, 19200, 4800, 38400, 2400, 115200)
+        parities = (args.parity,) if args.parity else ("N", "E", "O")
+        scan(port, slave_max=args.scan_max, bauds=bauds, parities=parities)
         return
 
+    baud = args.baud if args.baud else BAUDRATE
+    parity = args.parity if args.parity else PARITY
     bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals,
-                baud=args.baud, parity=args.parity)
+                baud=baud, parity=parity)
 
     # Always show current state first -- this is also the smoke test that
     # confirms wiring, baud, slave address and value encoding are correct.
