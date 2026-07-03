@@ -309,50 +309,72 @@ def run_schedule(bath, plateaus, minutes, ramp, tol, window_min, timeout_min):
         print("\nInterrupted. Bath left at its current setpoint.")
 
 
+def _probe_slave(baud, parity, port, slave):
+    """Return (present, {reg: value_or_'err'}) for one slave. A slave that answers
+    with a Modbus EXCEPTION (e.g. illegal register) is still PRESENT -- that is the
+    key: a 3500-series 3504 has no register 1, so it errors there but is on the bus.
+    Only a timeout / no reply counts as absent.
+    """
+    slave_exc = getattr(minimalmodbus, "SlaveReportedException", None)
+    b = Bath(port, slave=slave, use_float=False, decimals=1,
+             baud=baud, parity=parity, timeout=0.3)
+    present = False
+    reads = {}
+    for reg in (REG_PV, 289):                     # 1 (2000-series) and 289 (3500)
+        try:
+            reads[reg] = b.instr.read_register(reg, 1, signed=True)
+            present = True
+        except Exception as e:
+            if slave_exc is not None and isinstance(e, slave_exc):
+                present = True                    # device replied with an error code
+                reads[reg] = "err"
+            # else: NoResponse / garbage -> absent for this register
+    return present, reads
+
+
 def scan(port, slave_max=16,
          bauds=(9600, 19200, 4800, 38400, 2400, 115200),
          parities=("N", "E", "O")):
     """Probe serial settings until controllers answer. Read-only.
 
-    Sweeps baud x parity x slave address (1..slave_max) and reports EVERY Modbus
-    reply (a successful read of the PV register), so multiple devices on one bus
-    are all listed. It changes nothing on any controller.
+    Sweeps baud x parity x slave address (1..slave_max) and lists EVERY device that
+    responds -- INCLUDING one that answers with a Modbus exception (present but the
+    probed register is illegal). Reads both register 1 (2000-series PV) and 289
+    (3500-series PV) so a Eurotherm 3504 is not missed. Changes nothing.
     """
+    def fmt(v):
+        return f"{v:+.3f}" if isinstance(v, (int, float)) else str(v)
+
     slaves = range(1, slave_max + 1)
-    print(f"\nScanning {port} for responding Modbus slaves (read-only), "
+    print(f"\nScanning {port} for responding Modbus devices (read-only), "
           f"addresses 1..{slave_max} ...")
-    print("Each device reports its PV; a bath has several devices (main Eurotherm")
-    print("controller + over-temperature limiter), so expect more than one.\n")
+    print("A device that answers -- even with an 'illegal register' error -- is on")
+    print("the bus. reg1 = 2000-series PV, reg289 = 3500-series (3504) PV.\n")
     found = []
     for baud in bauds:
         for parity in parities:
             print(f"  trying baud={baud} parity={parity} ...")
             for slave in slaves:
                 try:
-                    b = Bath(port, slave=slave, use_float=False, decimals=1,
-                             baud=baud, parity=parity, timeout=0.3)
-                    pv = b.instr.read_register(REG_PV, 1, signed=True)
-                    sp = b.instr.read_register(REG_SETPOINT_1, 1, signed=True)
-                    print(f"    RESPONSE  baud={baud} parity={parity} slave={slave}"
-                          f"   PV(int1)={pv:+.3f}  SP1={sp:+.3f}")
-                    found.append((baud, parity, slave))
+                    present, reads = _probe_slave(baud, parity, port, slave)
                 except Exception:
-                    pass                          # no answer with these settings
+                    continue
+                if present:
+                    print(f"    DEVICE  baud={baud} parity={parity} slave={slave}"
+                          f"   reg1={fmt(reads.get(REG_PV))}  reg289={fmt(reads.get(289))}")
+                    found.append((baud, parity, slave, reads))
     if found:
-        print(f"\n{len(found)} device(s) answered. To tell them apart, --monitor each")
-        print("and change the setpoint on the EUROTHERM front panel: the address whose")
-        print("SP1/target follows your change is the bath controller (write to that one).")
-        for baud, parity, slave in found:
+        print(f"\n{len(found)} device(s) found. A device where reg289 shows a sane")
+        print("temperature is a 3500-series 3504 (its real map: PV=289, SP=2/5/24).")
+        print("Probe each to identify it:")
+        for baud, parity, slave, _ in found:
             print(f"  python3 bath.py --port {port} --baud {baud} "
-                  f"--parity {parity} --slave {slave} --monitor")
+                  f"--parity {parity} --slave {slave} --probe")
     else:
-        print("\nNo response on any combination. Most likely one of:")
-        print("  * controller comms set to EI-Bisynch, not Modbus (switch it in the")
-        print("    controller's comms/config menu -- iTools/Modbus only talk Modbus)")
-        print("  * no comms module fitted in the controller (it is optional)")
-        print("  * wrong port, or RS422/RS232 converter cable (ISO-232-432) issue,")
-        print("    TX/RX swapped, or converter not powered")
-        print("  * wrong slave address (try a wider --scan range) or stop-bit setting")
+        print("\nNo device answered at all (all timeouts). Most likely one of:")
+        print("  * controller comms set to EI-Bisynch, not Modbus")
+        print("  * no comms module fitted, wrong port, or RS422/RS232 wiring issue")
+        print("  * a baud/parity not covered here")
     return found
 
 
