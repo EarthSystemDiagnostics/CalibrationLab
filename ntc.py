@@ -3,18 +3,39 @@
 """
 NTC raw ADC counts -> resistance -> temperature, for live display only.
 
-Ported from CalibrationChains/lib/SPRTRtoT_NTCtoR.R (NTCcounts2temp / NTCcounts2R).
-This is the *raw* (nominal) conversion: it uses generic Steinhart-Hart-type
-constants (beta = 3380 K, R25 = 10 kOhm at 25 C), NOT the per-sensor calibration.
-It is meant only to show a rough temperature per node on screen during a run so
-the operator can see roughly where the NTCs sit relative to the bath and SPRT.
-The authoritative per-sensor calibration is done later in the R pipeline.
+counts -> resistance is ported from CalibrationChains/lib/SPRTRtoT_NTCtoR.R
+(NTCcounts2R). resistance -> temperature uses the universal MEAN lab calibration
+(a 4-parameter Steinhart-Hart curve, NTC_MEAN_COEF below), NOT a per-sensor fit:
+it is the mean of the 62 healthy GRIP sensors and represents every healthy sensor
+to +/-0.03..0.05 C over -40..0 C. It replaces the old nominal Beta curve (beta=3380),
+which read systematically too warm (+0.7 C at 0 C, growing to +3.6 C at -40 C).
+
+Still display-only / not a per-sensor calibration -- the authoritative per-sensor
+fit is applied later in the R pipeline -- but far closer to truth than Beta so the
+operator sees a realistic temperature per node during a run. The Beta curve is kept
+as counts_to_temp_c_beta() for the lab-vs-Beta diagnostic only.
 """
 
 import math
 
 ADC_FULLSCALE = 33554432        # 2**25, from the head's ADC front-end
 DIVIDER_OHM   = 499000.0        # fixed divider resistor in the front-end
+
+# Universal MEAN lab-S4 calibration: 1/T[K] = a + b*lnR + c*lnR^2 + d*lnR^3,
+# T_C = 1/(1/T) - 273.15, with R in ohms. Mean of the 62 healthy GRIP sensors
+# (a_suspect fits dropped). Source of record (EncoderHeads2026 repo):
+#   meta/mean_calibration_coefficients.csv        -- machine-readable, one row
+#   Greenland2026/derive_mean_calibration.R       -- reproducible derivation
+# per-NTC means differ by <=0.008 C, so ONE global set is used for all channels.
+NTC_MEAN_COEF = (
+    8.4229499262e-04,     # a
+    2.7615486685e-04,     # b
+    -3.1654916185e-06,    # c
+    3.0727486494e-07,     # d
+)
+
+# Nominal Beta model constants -- kept ONLY for the counts_to_temp_c_beta()
+# diagnostic; no longer the default conversion.
 BETA          = 3380.0          # nominal NTC beta [K]
 R25           = 10000.0         # nominal NTC resistance at 25 C [Ohm]
 T25           = 298.15          # 25 C in Kelvin
@@ -49,8 +70,31 @@ def counts_to_resistance(counts):
         return None
 
 
-def counts_to_temp_c(counts, beta=BETA, r25=R25, t25=T25):
-    """Raw ADC counts -> temperature in deg C (or None if not computable)."""
+def resistance_to_temp_c(r, coef=NTC_MEAN_COEF):
+    """NTC resistance [Ohm] -> temperature [deg C] via the 4-param S4 model
+    (1/T = a + b*lnR + c*lnR^2 + d*lnR^3). Returns None if not computable."""
+    if r is None or r <= 0:
+        return None
+    try:
+        a, b, c, d = coef
+        ln = math.log(r)
+        inv_t = a + b * ln + c * ln * ln + d * ln * ln * ln
+        if inv_t == 0:
+            return None
+        return 1.0 / inv_t - 273.15
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def counts_to_temp_c(counts, coef=NTC_MEAN_COEF):
+    """Raw ADC counts -> temperature in deg C using the mean lab-S4 calibration
+    (or None if not computable). This is the default on-screen conversion."""
+    return resistance_to_temp_c(counts_to_resistance(counts), coef=coef)
+
+
+def counts_to_temp_c_beta(counts, beta=BETA, r25=R25, t25=T25):
+    """Raw ADC counts -> temperature via the nominal Beta model. DIAGNOSTIC ONLY --
+    reads systematically too warm; use counts_to_temp_c() for the real display."""
     r = counts_to_resistance(counts)
     if r is None:
         return None
@@ -173,7 +217,10 @@ def format_ntc(rows):
 
 
 if __name__ == "__main__":
-    # Sanity check against real recorded counts (bath was near -46 C).
-    for c in (5812827, 5540969, 4952001, 4540193):
-        r = counts_to_resistance(c)
-        print(f"counts={c} -> R={r:9.1f} ohm -> {counts_to_temp_c(c):+7.3f} C")
+    # Sanity check against real recorded counts; show the mean-S4 default next to
+    # the old Beta value (Beta reads systematically too warm).
+    print(f"{'counts':>9}  {'R [ohm]':>10}  {'S4_mean':>9}  {'Beta':>9}  {'diff':>7}")
+    for cnt in (5812827, 5540969, 4952001, 4540193):
+        r = counts_to_resistance(cnt)
+        s4, bt = counts_to_temp_c(cnt), counts_to_temp_c_beta(cnt)
+        print(f"{cnt:9d}  {r:10.1f}  {s4:+9.3f}  {bt:+9.3f}  {s4-bt:+7.3f}")

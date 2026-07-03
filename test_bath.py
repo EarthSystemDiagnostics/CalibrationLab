@@ -343,10 +343,12 @@ def test_sprt_anchor_points():
 
 
 def test_ntc_counts_conversion():
-    # Against real recorded counts (bath near -46 C) and edge cases.
+    # Against real recorded counts and edge cases. Default is the mean lab-S4 curve.
     assert abs(ntc.counts_to_resistance(5812827) - 361210.0) < 1.0
-    assert abs(ntc.counts_to_temp_c(5812827) - (-46.661)) < 0.01
-    assert abs(ntc.counts_to_temp_c(4540193) - (-39.454)) < 0.01
+    assert abs(ntc.counts_to_temp_c(5812827) - (-51.021)) < 0.01     # S4 mean
+    assert abs(ntc.counts_to_temp_c(4540193) - (-42.968)) < 0.01
+    # Beta diagnostic still available and reads ~4 C warmer.
+    assert abs(ntc.counts_to_temp_c_beta(5812827) - (-46.661)) < 0.01
     assert ntc.counts_to_temp_c(ntc.ADC_FULLSCALE) is None       # divide by zero
     assert ntc.counts_to_temp_c(0) is None                       # R <= 0 -> None
 
@@ -359,7 +361,7 @@ def test_ntc_disconnected_detection_and_format():
     data = "5812827 || 16777216 || 4540193"          # N91 open input
     pairs = ntc.ntc1_from_row(hdr, data)
     assert dict(pairs)["N91"] is None                 # flagged as disconnected
-    assert abs(dict(pairs)["N90"] - (-46.661)) < 0.01
+    assert abs(dict(pairs)["N90"] - (-51.021)) < 0.01
     out = ntc.format_ntc1(pairs)
     assert "!! Nodes not connected: N91" in out
     assert "N90=" in out and "N92=" in out
@@ -378,7 +380,7 @@ def test_ntc_multichannel_conversion_and_format():
     d = dict(rows)
     # channel order preserved, all three present for N94
     assert [ch for ch, _ in d["N94"]] == ["NTC1", "NTC2", "TestSB"]
-    assert abs(dict(d["N94"])["NTC1"] - (-46.661)) < 0.01
+    assert abs(dict(d["N94"])["NTC1"] - (-51.021)) < 0.01
     assert dict(d["N96"])["TestSB"] is None               # open input -> None
     out = ntc.format_ntc(rows)
     assert "N94: NTC1=" in out and "NTC2=" in out and "TestSB=" in out
@@ -394,8 +396,8 @@ def test_ntc1_from_row_as_used_by_legacy_worker():
     header = "SecondsElapsed; DateTimePC; N94_NTC1 | N94_NTC2 || N96_NTC1 | N96_NTC2"
     cols = header.split(";", 2)[2]
     res = dict(ntc.ntc1_from_row(cols, "5812827 | 1 || 4540193 | 2"))
-    assert abs(res["N94"] - (-46.661)) < 0.01
-    assert abs(res["N96"] - (-39.454)) < 0.01
+    assert abs(res["N94"] - (-51.021)) < 0.01
+    assert abs(res["N96"] - (-42.968)) < 0.01
     assert ntc.ntc1_from_row(cols, cols) == []                  # echoed header line
     assert ntc.ntc1_from_row(cols, "New Node Array: 94 96") == []  # meta line
 
@@ -410,11 +412,11 @@ def test_ntc1_parser_simple(tmp="/tmp/_test_ntc_a.txt"):
         "Group1; SecondsElapsed; DateTimePC; N90_NTC1 | N90_NTC2 | N90_TestSB || N91_NTC1 | N91_NTC2 | N91_TestSB\n"
         "Group1; 0.05; 2026-07-02 16:00:00.0; New Node Array: 90 91\n"
         "Group1; 9.19; 2026-07-02 16:00:09.1; 5812827 | 5540969 | 4952001 || 4540193 | 300 | 400\n")
-    d = _chan(ca.latest_ntc_temps(tmp))            # all NTC channels
-    assert abs(d["N90"]["NTC1"] - (-46.661)) < 0.01
-    assert abs(d["N90"]["NTC2"] - (-45.173)) < 0.01   # second channel converted too
-    assert abs(d["N90"]["TestSB"] - (-41.867)) < 0.01 # TestSB is an NTC as well
-    assert abs(d["N91"]["NTC1"] - (-39.454)) < 0.01
+    d = _chan(ca.latest_ntc_temps(tmp))            # all NTC channels, mean-S4 curve
+    assert abs(d["N90"]["NTC1"] - (-51.021)) < 0.01
+    assert abs(d["N90"]["NTC2"] - (-49.349)) < 0.01   # second channel converted too
+    assert abs(d["N90"]["TestSB"] - (-45.652)) < 0.01 # TestSB is an NTC as well
+    assert abs(d["N91"]["NTC1"] - (-42.968)) < 0.01
 
 
 def test_ntc1_parser_standalone_and_order(tmp="/tmp/_test_ntc_b.txt"):
@@ -424,8 +426,8 @@ def test_ntc1_parser_standalone_and_order(tmp="/tmp/_test_ntc_b.txt"):
         "Group1; SecondsElapsed; DateTimePC; TempADC || N90_NTC2 | N90_NTC1 || N91_NTC2 | N91_NTC1\n"
         "Group1; 9.19; 2026-07-02 16:00:09.1; 999 || 111 | 5812827 || 222 | 4540193\n")
     d = _chan(ca.latest_ntc_temps(tmp, channels=("NTC1",)))
-    assert abs(d["N90"]["NTC1"] - (-46.661)) < 0.01
-    assert abs(d["N91"]["NTC1"] - (-39.454)) < 0.01
+    assert abs(d["N90"]["NTC1"] - (-51.021)) < 0.01
+    assert abs(d["N91"]["NTC1"] - (-42.968)) < 0.01
 
 
 def test_ntc1_parser_multigroup_picks_latest(tmp="/tmp/_test_ntc_c.txt"):
@@ -436,7 +438,7 @@ def test_ntc1_parser_multigroup_picks_latest(tmp="/tmp/_test_ntc_c.txt"):
         "Group2; 2.0; 2026-07-02 16:00:02.0; 4540193 || 4540193\n")
     res = ca.latest_ntc_temps(tmp, channels=("NTC1",))   # last row is Group2
     assert [n for n, _ in res] == ["N95", "N96"]
-    assert all(abs(dict(chans)["NTC1"] - (-39.454)) < 0.01 for _, chans in res)
+    assert all(abs(dict(chans)["NTC1"] - (-42.968)) < 0.01 for _, chans in res)
 
 
 def test_ntc1_status_no_data():

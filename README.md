@@ -81,9 +81,9 @@ files keep the raw values only — the display conversion never touches them):
 
 The MicroK line adds the **SPRT temperature** (`sprt.py`); the head line adds the
 **raw NTC temperature per node for every configured NTC channel** — `NTC1`, `NTC2`
-and `TestSB` (which is wired as a second NTC) — via `ntc.py`. Both use the nominal
-R-workflow formulas and are for orientation only — the file contents are unchanged,
-so the R calibration pipeline is unaffected.
+and `TestSB` (which is wired as a second NTC) — via `ntc.py`. The NTC conversion
+uses the universal mean lab-S4 calibration (see below) and is for orientation only
+— the file contents are unchanged, so the R calibration pipeline is unaffected.
 
 A node whose raw counts exceed `10_000_000` (open input) is reported as
 `!! Nodes not connected: N91` instead of a temperature.
@@ -237,10 +237,12 @@ encoding or baud/parity (in `bath.py`) is off — see the header notes.
 out afterwards. The live status line shows bath PV/SP, the **SPRT temperature**
 (via `sprt.py`) **and** the **raw NTC temperature per node for each NTC channel**
 (NTC1/NTC2/TestSB, via `ntc.py`) so you
-see the whole picture at a plateau. Both conversions are **display only** and use
-the nominal formulas from the R workflow — SPRT: the 2-point ratio calibration;
-NTC: `NTCcounts2temp` (β=3380, R25=10 kΩ), i.e. uncalibrated raw temperature. The
-authoritative per-sensor calibration stays in the R pipeline.
+see the whole picture at a plateau. Both conversions are **display only** — SPRT:
+the 2-point ratio calibration; NTC: the **universal mean lab-S4 calibration** (a
+4-param Steinhart–Hart curve averaged over the 62 healthy GRIP sensors, `ntc.py`
+`NTC_MEAN_COEF`), which tracks a healthy sensor to ±0.03–0.05 °C and replaces the
+old β=3380 curve that read ~0.7 °C (0 °C) to ~3.6 °C (−40 °C) too warm. It is not a
+per-sensor fit — the authoritative per-sensor calibration stays in the R pipeline.
 
 ⚠️ **Verify once against the real controller** (see `bath.py` header): serial
 baud/parity, Modbus slave address, and the **value encoding**
