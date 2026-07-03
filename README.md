@@ -203,8 +203,14 @@ for other Isotech units whose controller is configured for Modbus.
 ```bash
 python3 -m pip install -r requirements.txt      # now also installs minimalmodbus
 python3 calibration_auto.py --dry-run           # connect + read the bath, don't move it
-python3 calibration_auto.py                      # full automated run
+python3 calibration_auto.py                      # full automated run (scrolling log)
+python3 calibration_auto.py --dashboard          # fixed in-place overview panel
 ```
+
+`--dashboard` replaces the scrolling log with a single panel that refreshes in
+place — plateau progress `i/N`, phase (settle/dwell), bath PV/SP/OUT/ramp, the
+SPRT temperature and a live NTC table for **all** nodes (every group merged). The
+loggers still write their files exactly as before; only the console view changes.
 
 ### Quick bath-only usage — `bath.py` (no logging)
 

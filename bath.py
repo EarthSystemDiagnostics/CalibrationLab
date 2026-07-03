@@ -192,7 +192,8 @@ class Bath:
         self._write(REG_SP_RATE_LIMIT, 0 if c_per_min is None else c_per_min)
 
     def wait_until_stable(self, target, tol=0.005, window_s=120,
-                          poll_s=5.0, timeout_s=3600, verbose=True, extra=None):
+                          poll_s=5.0, timeout_s=3600, verbose=True, extra=None,
+                          on_poll=None):
         """Block until PV is within +/-tol of target and stays there for window_s.
 
         Returns True on success, False if timeout_s elapses first. Tune tol to
@@ -200,6 +201,7 @@ class Bath:
 
         `extra` is an optional callable returning a string appended to every
         status line (e.g. the live SPRT temperature); errors in it are ignored.
+        `on_poll(pv, in_band, held)` is called every poll (used for a dashboard).
         """
         def suffix():
             if extra is None:
@@ -215,17 +217,23 @@ class Bath:
             pv = self.read_pv()
             in_band = abs(pv - target) <= tol
             now = time.time()
+            held = 0.0
             if in_band:
                 in_band_since = in_band_since or now
                 held = now - in_band_since
                 if verbose:
                     print(f"  PV={pv:+.4f}  in band, held {held:5.0f}/{window_s}s{suffix()}")
-                if held >= window_s:
-                    return True
             else:
                 in_band_since = None
                 if verbose:
                     print(f"  PV={pv:+.4f}  (target {target:+.4f}, off by {pv-target:+.4f}){suffix()}")
+            if on_poll is not None:
+                try:
+                    on_poll(pv, in_band, held)
+                except Exception:
+                    pass
+            if in_band and held >= window_s:
+                return True
             time.sleep(poll_s)
         return False
 

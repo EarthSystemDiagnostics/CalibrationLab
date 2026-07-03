@@ -258,6 +258,58 @@ def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
         return None
 
 
+def latest_ntc_temps_by_group(ntc_file, channels=ntc.NTC_CHANNELS):
+    """Merge the most recent data row of EVERY group -> all nodes at once.
+
+    The head multiplexes groups, so latest_ntc_temps() only ever shows the last
+    group read. For the dashboard we want every node, so take each group's newest
+    data row and concatenate. Returns [(node, [(channel, temp)...])...] or None.
+    """
+    try:
+        with open(ntc_file, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 32768))            # enough for the last full cycle
+            lines = f.read().decode("utf-8", "replace").splitlines()
+
+        latest = {}                                  # group -> index of newest data row
+        for i in range(len(lines) - 1, -1, -1):
+            parts = lines[i].split(";", 3)
+            if len(parts) != 4 or not parts[0].strip().startswith("Group"):
+                continue
+            grp = parts[0].strip()
+            if grp in latest:
+                continue
+            try:
+                float(parts[1])
+            except ValueError:
+                continue
+            block = parts[3]
+            if block.strip() and "NTC" not in block and "New Node Array" not in block:
+                latest[grp] = i
+
+        out = []
+        for grp, didx in latest.items():
+            dblock = lines[didx].split(";", 3)[3]
+            header = None
+            for i in range(didx, -1, -1):
+                hp = lines[i].split(";", 3)
+                if (len(hp) == 4 and hp[0].strip() == grp
+                        and any(("_" + ch) in hp[3] for ch in channels)):
+                    header = hp[3]
+                    break
+            if header is not None:
+                out.extend(ntc.ntc_from_row(header, dblock, channels=channels))
+        def node_num(r):
+            try:
+                return int(r[0][1:])
+            except ValueError:
+                return 0
+        return sorted(out, key=node_num) or None
+    except Exception:
+        return None
+
+
 def ntc_status(ntc_file, channels=ntc.NTC_CHANNELS):
     """Compact 'NTC[C] N94: NTC1=.. NTC2=.. TestSB=..' string for status displays;
     appends a 'Not connected' warning for any open channel."""
@@ -267,24 +319,86 @@ def ntc_status(ntc_file, channels=ntc.NTC_CHANNELS):
     return "NTC[C] " + ntc.format_ntc(res)
 
 
-def interruptible_sleep(seconds, label, extra=None):
+def interruptible_sleep(seconds, label, extra=None, on_tick=None):
     """Sleep in small steps so Ctrl-C stays responsive; print a coarse countdown.
 
     `extra` is an optional callable returning a status string to append.
+    `on_tick(remaining_s)` is an optional callback; when given, it is called each
+    step instead of printing the countdown line (used to drive the dashboard).
     """
     end = time.time() + seconds
     while True:
         remaining = end - time.time()
         if remaining <= 0:
             return
-        suffix = ""
-        if extra is not None:
+        if on_tick is not None:
             try:
-                suffix = "   " + extra()
+                on_tick(remaining)
             except Exception:
-                suffix = ""
-        print(f"  [{label}] {remaining/60:5.1f} min remaining ...{suffix}")
+                pass
+        else:
+            suffix = ""
+            if extra is not None:
+                try:
+                    suffix = "   " + extra()
+                except Exception:
+                    suffix = ""
+            print(f"  [{label}] {remaining/60:5.1f} min remaining ...{suffix}")
         time.sleep(min(15.0, remaining))
+
+
+# --------------------------------------------------------------------------
+# Live dashboard (opt-in) -- a fixed panel that refreshes in place instead of
+# scrolling. All bath reads happen in the control thread that calls this, so
+# there is no serial contention.
+# --------------------------------------------------------------------------
+def _safe(fn, fmt, default="--"):
+    try:
+        return fmt.format(fn())
+    except Exception:
+        return default
+
+
+def render_dashboard(bath, ctx):
+    def bath_read(name, fmt):
+        m = getattr(bath, name, None)
+        return _safe(m, fmt) if m else "--"
+
+    elapsed = int(time.time() - ctx["t0"])
+    hh, mm, ss = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+    L = []
+    L.append("=" * 64)
+    L.append(f" CALIBRATION  {ctx['exp']}")
+    L.append(f" run {ctx['run_stamp']}    elapsed {hh:02d}:{mm:02d}:{ss:02d}"
+             f"    (Ctrl-C to stop)")
+    L.append("-" * 64)
+    L.append(f" Plateau   {ctx['idx']}/{ctx['n']}    setpoint {ctx['setpoint']:+.2f} C"
+             f"    ramp {ctx['ramp']}")
+    if ctx["phase"] == "SETTLE":
+        L.append(f" Phase     SETTLE  held {ctx['held']:.0f}/{ctx['window_s']:.0f} s"
+                 f"    (timeout {ctx['timeout_min']:.0f} min)")
+    else:
+        note = "" if ctx.get("stable_ok", True) else "  [was NOT stable -> check]"
+        L.append(f" Phase     DWELL   {ctx['dwell_remaining']/60:.1f} min left{note}")
+    L.append(f" Bath      PV {bath_read('read_pv','{:+.3f}')} C   "
+             f"SP {bath_read('read_setpoint','{:+.3f}')} C   "
+             f"OUT {bath_read('read_output','{:.1f}')} %   "
+             f"rate {bath_read('read_ramp_rate','{:g}')}")
+    L.append(f" SPRT      {sprt_status(ctx['microk_file'])}")
+    L.append("-" * 64)
+    L.append(" NTC [C] (raw, mean-S4):")
+    rows = latest_ntc_temps_by_group(ctx["logger_file"], channels=ctx["ntc_channels"])
+    if rows:
+        for node, chans in rows:
+            cells = "  ".join(f"{ch}={t:+.3f}" if t is not None else f"{ch}=--"
+                              for ch, t in chans)
+            L.append(f"   {node:>4}: {cells}")
+    else:
+        L.append("   (waiting for NTC data ...)")
+    L.append("=" * 64)
+    # Home the cursor and clear to end of screen, then paint -- no scroll, low flicker.
+    sys.stdout.write("\033[H\033[J" + "\n".join(L) + "\n")
+    sys.stdout.flush()
 
 
 # --------------------------------------------------------------------------
@@ -296,6 +410,9 @@ def main():
     ap.add_argument("--exp", default=None, help="override the experiment name")
     ap.add_argument("--dry-run", action="store_true",
                     help="connect and read the bath but never change its setpoint")
+    ap.add_argument("--dashboard", action="store_true",
+                    help="show a fixed, in-place overview panel instead of scrolling "
+                         "log lines (loggers still write their files)")
     args = ap.parse_args()
 
     c = read_config(args.param, exp_override=args.exp)
@@ -377,10 +494,10 @@ def main():
     # --- Start the two loggers (continuous, for the whole run). ---
     stop_event = threading.Event()
     t_micro  = threading.Thread(target=microk_worker,
-                                args=(stop_event, c, microk_port, microk_file),
+                                args=(stop_event, c, microk_port, microk_file, args.dashboard),
                                 daemon=True, name="MicroK")
     t_logger = threading.Thread(target=logger_worker,
-                                args=(stop_event, c, logger_port, logger_file),
+                                args=(stop_event, c, logger_port, logger_file, args.dashboard),
                                 daemon=True, name="TempHead")
     t_micro.start()
     t_logger.start()
@@ -388,23 +505,40 @@ def main():
 
     pf = open_plateaus_file(plateau_file, b)
     n_plateaus = len(b["plateaus"])
+    run_t0 = time.time()
+    dash = args.dashboard
+    def say(*a):
+        if not dash:
+            print(*a)
     try:
         for i, (sp, minutes, ramp) in enumerate(zip(b["plateaus"], b["minutes"], b["ramps"]), 1):
             tag = f"Plateau {i}/{n_plateaus}"        # progress marker shown everywhere
-            print(f"\n===== {tag}: setpoint {sp:+.3f} C "
-                  f"(dwell {minutes:g} min, ramp {'max' if ramp is None else str(ramp)+' C/min'}) =====")
+            ramp_str = "max" if ramp is None else f"{ramp:g} C/min"
+            say(f"\n===== {tag}: setpoint {sp:+.3f} C "
+                f"(dwell {minutes:g} min, ramp {ramp_str}) =====")
 
             # Timeout scales with how far the bath must travel from where it is
             # right now (30 min/10 K by default). If it still hasn't settled by
             # then, we measure anyway rather than block the whole run.
             pv_now  = bath.read_pv()
             timeout = plateau_timeout_min(b, sp - pv_now)
-            print(f"  step {pv_now:+.2f} -> {sp:+.2f} C (|dT|={abs(sp-pv_now):.1f} K); "
-                  f"stability timeout {timeout:.0f} min.")
+            say(f"  step {pv_now:+.2f} -> {sp:+.2f} C (|dT|={abs(sp-pv_now):.1f} K); "
+                f"stability timeout {timeout:.0f} min.")
 
             bath.set_ramp_rate(ramp)          # None/0 -> rate limit off (max speed)
             bath.set_setpoint(sp)
             t_command = datetime.now()
+
+            # Shared dashboard context for this plateau (used only when --dashboard).
+            base = dict(exp=c["exp"], run_stamp=run_stamp, t0=run_t0, idx=i,
+                        n=n_plateaus, setpoint=sp, ramp=ramp_str, timeout_min=timeout,
+                        window_s=b["window_min"] * 60, microk_file=microk_file,
+                        logger_file=logger_file, ntc_channels=ntc_channels)
+            on_poll = None
+            if dash:
+                on_poll = lambda pv, inb, held: render_dashboard(
+                    bath, dict(base, phase="SETTLE", held=held))
+                render_dashboard(bath, dict(base, phase="SETTLE", held=0.0))
 
             # Live SPRT reading (from the MicroK log), tagged with the plateau
             # progress so you always see where you are while waiting to settle.
@@ -415,14 +549,16 @@ def main():
                 window_s=b["window_min"] * 60,
                 poll_s=5.0,
                 timeout_s=timeout * 60,
+                verbose=not dash,
                 extra=status,
+                on_poll=on_poll,
             )
             t_stable = datetime.now()
             if ok:
-                print(f"  -> {tag} stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
+                say(f"  -> {tag} stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
             else:
-                print(f"  !! {tag} NOT stable within {timeout:.0f} min. "
-                      f"Measuring anyway -- check this plateau afterwards.")
+                say(f"  !! {tag} NOT stable within {timeout:.0f} min. "
+                    f"Measuring anyway -- check this plateau afterwards.")
 
             t_dwell_start = datetime.now()
             t_dwell_end   = t_dwell_start + timedelta(minutes=minutes)  # planned end
@@ -437,12 +573,19 @@ def main():
             # During the dwell, show bath PV/SP, the SPRT temperature, and the raw
             # NTC temperature per node for every configured NTC channel -- the full
             # picture at the plateau.
-            dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
-                                    f"{sprt_status(microk_file)} | "
-                                    f"{ntc_status(logger_file, ntc_channels)}")
-            interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
-            print(f"  {tag} done.")
+            if dash:
+                on_tick = lambda rem: render_dashboard(
+                    bath, dict(base, phase="DWELL", dwell_remaining=rem, stable_ok=ok))
+                interruptible_sleep(minutes * 60, f"{tag} dwell", on_tick=on_tick)
+            else:
+                dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
+                                        f"{sprt_status(microk_file)} | "
+                                        f"{ntc_status(logger_file, ntc_channels)}")
+                interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
+            say(f"  {tag} done.")
 
+        if dash:
+            sys.stdout.write("\033[H\033[J")     # leave a clean screen
         print("\nAll plateaus complete. Stopping loggers ...")
     except KeyboardInterrupt:
         print("\nInterrupted. Stopping loggers ...")

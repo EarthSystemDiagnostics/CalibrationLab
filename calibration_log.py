@@ -109,7 +109,7 @@ def pick_port(role, hint):
 # --------------------------------------------------------------------------
 # Workers: one device each, own serial port, own file
 # --------------------------------------------------------------------------
-def microk_worker(stop_event, c, microk_port, microk_file):
+def microk_worker(stop_event, c, microk_port, microk_file, quiet=False):
     try:
         ser = serial.Serial(microk_port, 9600, serial.EIGHTBITS,
                              serial.PARITY_NONE, serial.STOPBITS_ONE, timeout=2)
@@ -146,13 +146,14 @@ def microk_worker(stop_event, c, microk_port, microk_file):
                         tstr = f"  ->  {t_c:+.4f} C"
                     except ValueError:
                         tstr = ""
-                    print(f"[MicroK] #{n} Ch{ch}: {data}{tstr}")
+                    if not quiet:
+                        print(f"[MicroK] #{n} Ch{ch}: {data}{tstr}")
     finally:
         ser.close()
         print("[MicroK] stopped, port closed.")
 
 
-def logger_worker(stop_event, c, logger_port, logger_file):
+def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
     try:
         ser = serial.Serial(logger_port, 19200, serial.EIGHTBITS,
                              serial.PARITY_NONE, serial.STOPBITS_ONE, timeout=1)
@@ -214,7 +215,8 @@ def logger_worker(stop_event, c, logger_port, logger_file):
                             temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
                                                      channels=ntc_channels)
                             tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
-                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
+                            if not quiet:
+                                print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
     finally:
         ser.close()
         print("[TempHead] stopped, port closed.")

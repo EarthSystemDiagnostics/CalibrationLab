@@ -242,9 +242,13 @@ class BisynchBath:
         return self._read_num("RR")
 
     def wait_until_stable(self, target, tol=0.005, window_s=120,
-                          poll_s=5.0, timeout_s=3600, verbose=True, extra=None):
+                          poll_s=5.0, timeout_s=3600, verbose=True, extra=None,
+                          on_poll=None):
         """Block until PV is within +/-tol of target for window_s. Returns True,
-        or False if timeout_s elapses first. Identical semantics to bath.Bath."""
+        or False if timeout_s elapses first. Identical semantics to bath.Bath.
+
+        `on_poll(pv, in_band, held)` is called every poll (regardless of verbose);
+        use it to drive a live dashboard."""
         def suffix():
             if extra is None:
                 return ""
@@ -259,17 +263,23 @@ class BisynchBath:
             pv = self.read_pv()
             in_band = abs(pv - target) <= tol
             now = time.time()
+            held = (now - in_band_since) if (in_band and in_band_since) else 0.0
             if in_band:
                 in_band_since = in_band_since or now
                 held = now - in_band_since
                 if verbose:
                     print(f"  PV={pv:+.4f}  in band, held {held:5.0f}/{window_s}s{suffix()}")
-                if held >= window_s:
-                    return True
             else:
                 in_band_since = None
                 if verbose:
                     print(f"  PV={pv:+.4f}  (target {target:+.4f}, off by {pv-target:+.4f}){suffix()}")
+            if on_poll is not None:
+                try:
+                    on_poll(pv, in_band, held)
+                except Exception:
+                    pass
+            if in_band and held >= window_s:
+                return True
             time.sleep(poll_s)
         return False
 
