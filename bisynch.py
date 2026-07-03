@@ -281,18 +281,24 @@ def monitor(port, address=1, baud=9600, interval=5.0):
     b = BisynchBath(port, address=address, baud=baud)
     print(f"\nMonitoring 3504 on {port} addr {address} (every {interval:g} s). "
           f"Ctrl-C to stop.")
-    print("'rate' is the setpoint rate limit RR (0 = off / max speed).")
-    print(f"{'time':>8}   {'PV [C]':>10}   {'setpoint [C]':>13}   {'OUT [%]':>8}   "
-          f"{'rate':>8}")
+    print("'target' = commanded setpoint (SL, jumps at once). 'workSP' = working")
+    print("setpoint (SP, rate-limited). With a ramp active, workSP crawls toward")
+    print("target at 'rate' C/min; with rate=off it equals target immediately.")
+    print(f"{'time':>8}   {'PV [C]':>10}   {'target [C]':>11}   {'workSP [C]':>11}   "
+          f"{'OUT [%]':>8}   {'rate':>8}")
     t0 = time.time()
     try:
         while True:
             try:
                 rr = b.read_ramp_rate()
                 rate = "off" if rr == 0 else f"{rr:g}"
+                try:
+                    wsp = f"{b._read_num('SP'):+11.3f}"
+                except Exception:
+                    wsp = f"{'n/a':>11}"
                 line = (f"{time.time()-t0:8.0f}   {b.read_pv():+10.3f}   "
-                        f"{b.read_setpoint():+13.3f}   {b.read_output():8.1f}   "
-                        f"{rate:>8}")
+                        f"{b.read_setpoint():+11.3f}   {wsp}   "
+                        f"{b.read_output():8.1f}   {rate:>8}")
             except Exception as e:
                 line = f"{time.time()-t0:8.0f}   (read error: {type(e).__name__})"
             print(line)
