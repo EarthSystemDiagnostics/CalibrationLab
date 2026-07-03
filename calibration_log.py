@@ -206,10 +206,10 @@ def logger_worker(stop_event, c, logger_port, logger_file):
                             fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                             fh.flush()
                             i += 1
-                            # On-screen only: raw NTC1 temperature per node.
+                            # On-screen only: raw NTC1 temperature per node, plus a
+                            # warning for any node reading as not connected.
                             temps = ntc.ntc1_from_row(ntc_header_cols[g_idx], data_values)
-                            tstr = ("  ->  " + " ".join(f"{node}={t:+.3f}" for node, t in temps)
-                                    if temps else "")
+                            tstr = "  ->  " + ntc.format_ntc1(temps) if temps else ""
                             print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
     finally:
         ser.close()

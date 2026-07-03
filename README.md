@@ -84,6 +84,9 @@ The MicroK line adds the **SPRT temperature** (`sprt.py`); the head line adds th
 formulas and are for orientation only — the file contents are unchanged, so the R
 calibration pipeline is unaffected.
 
+A node whose raw counts exceed `10_000_000` (open input) is reported as
+`!! Nodes not connected: N91` instead of a temperature.
+
 Output files can be **copied at any time while logging** — every line is
 `flush()`ed to disk immediately, so a copy always contains all completed lines.
 

@@ -19,6 +19,14 @@ BETA          = 3380.0          # nominal NTC beta [K]
 R25           = 10000.0         # nominal NTC resistance at 25 C [Ohm]
 T25           = 298.15          # 25 C in Kelvin
 
+# Raw counts above this mean an open input -> the node/sensor is not connected.
+DISCONNECTED_COUNTS = 10_000_000
+
+
+def is_connected(counts):
+    """True if the raw counts look like a real, connected sensor."""
+    return counts is not None and counts <= DISCONNECTED_COUNTS
+
 
 def counts_to_resistance(counts):
     """Raw ADC counts -> NTC resistance in Ohm (or None if out of range)."""
@@ -61,9 +69,11 @@ def ntc1_from_row(header_cols, data_block):
                       "SecondsElapsed; DateTimePC; " in a group header).
     `data_block`   -- the matching '||'-joined data values (raw ADC counts).
 
-    NTC1 columns are located by their `Nxx_NTC1` label, so standalone columns and
-    channel order need no assumptions. Non-data blocks (echoed headers, meta
-    lines) simply yield an empty list. Returns [] if the two don't line up.
+    Returns [(node_label, temp_C), ...]; `temp_C` is None for a node whose raw
+    counts exceed DISCONNECTED_COUNTS (open input -> not connected). NTC1 columns
+    are located by their `Nxx_NTC1` label, so standalone columns and channel order
+    need no assumptions. Non-data blocks (echoed headers, meta lines) yield an
+    empty list. Returns [] if header and data don't line up.
     """
     hsegs, dsegs = _cells(header_cols), _cells(data_block)
     if len(hsegs) != len(dsegs):
@@ -77,10 +87,24 @@ def ntc1_from_row(header_cols, data_block):
                     counts = float(dseg[j])
                 except ValueError:
                     continue
-                t = counts_to_temp_c(counts)
-                if t is not None:
-                    out.append((node, t))
+                if not is_connected(counts):
+                    out.append((node, None))          # sensor not connected
+                else:
+                    t = counts_to_temp_c(counts)
+                    if t is not None:
+                        out.append((node, t))
     return out
+
+
+def format_ntc1(pairs):
+    """Format ntc1_from_row() output for a status line: connected nodes as
+    'N90=+.. ', plus a '!! Nodes not connected: ...' warning for None entries."""
+    connected = " ".join(f"{node}={t:+.3f}" for node, t in pairs if t is not None)
+    disconnected = [node for node, t in pairs if t is None]
+    parts = [connected] if connected else []
+    if disconnected:
+        parts.append("!! Nodes not connected: " + " ".join(disconnected))
+    return "  ".join(parts)
 
 
 if __name__ == "__main__":

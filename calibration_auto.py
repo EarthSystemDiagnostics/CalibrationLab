@@ -224,11 +224,12 @@ def latest_ntc1_temps(ntc_file):
 
 
 def ntc1_status(ntc_file):
-    """Compact 'NTC1[C] N90=+.. N91=+..' string for status displays."""
+    """Compact 'NTC1[C] N90=+.. N91=+..' string for status displays; appends a
+    'Nodes not connected' warning for any node whose raw counts are out of range."""
     res = latest_ntc1_temps(ntc_file)
     if not res:
         return "NTC1=--"
-    return "NTC1[C] " + " ".join(f"{node}={t:+.3f}" for node, t in res)
+    return "NTC1[C] " + ntc.format_ntc1(res)
 
 
 def interruptible_sleep(seconds, label, extra=None):

@@ -329,6 +329,23 @@ def test_ntc_counts_conversion():
     assert ntc.counts_to_temp_c(0) is None                       # R <= 0 -> None
 
 
+def test_ntc_disconnected_detection_and_format():
+    # Raw counts > 10_000_000 -> node not connected (temp None), warned in output.
+    assert ntc.is_connected(5812827) is True
+    assert ntc.is_connected(10_000_001) is False
+    hdr = "N90_NTC1 || N91_NTC1 || N92_NTC1"
+    data = "5812827 || 16777216 || 4540193"          # N91 open input
+    pairs = ntc.ntc1_from_row(hdr, data)
+    assert dict(pairs)["N91"] is None                 # flagged as disconnected
+    assert abs(dict(pairs)["N90"] - (-46.661)) < 0.01
+    out = ntc.format_ntc1(pairs)
+    assert "!! Nodes not connected: N91" in out
+    assert "N90=" in out and "N92=" in out
+    # all disconnected -> only the warning
+    allbad = ntc.format_ntc1([("N90", None), ("N91", None)])
+    assert allbad == "!! Nodes not connected: N90 N91"
+
+
 def test_ntc1_from_row_as_used_by_legacy_worker():
     # calibration_log.py passes the header with its "SecondsElapsed; DateTimePC; "
     # prefix stripped, and the raw head line as the data block.
