@@ -153,6 +153,17 @@ def test_ramp_rate():
     b.close()
 
 
+def test_sign_padded_value_parses():
+    # The 3504 returns small/negative values with a space after the sign, e.g.
+    # '- 0.01'. read_pv must still parse it to -0.01 (this was a real bug).
+    b = bisynch.BisynchBath("/dev/fake", address=1)
+    b.dev.read_param = lambda addr, mnem: "- 0.01"
+    check("sign-padded '- 0.01' parses", abs(b.read_pv() - (-0.01)) < 1e-9)
+    b.dev.read_param = lambda addr, mnem: "  0.00"
+    check("space-padded '  0.00' parses", abs(b.read_pv() - 0.0) < 1e-9)
+    b.close()
+
+
 def test_wait_until_stable():
     b = bisynch.BisynchBath("/dev/fake", address=1)
     b.set_setpoint(0.0)                            # PV will converge toward 0
@@ -167,6 +178,7 @@ if __name__ == "__main__":
     test_read()
     test_setpoint_writeback()
     test_ramp_rate()
+    test_sign_padded_value_parses()
     test_wait_until_stable()
     npass = sum(1 for _, ok in _results if ok)
     print(f"\n{npass} passed, {len(_results) - npass} failed")

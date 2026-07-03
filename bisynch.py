@@ -179,7 +179,9 @@ class BisynchBath:
             val = self.dev.read_param(self.address, mnemonic)
             if val:
                 try:
-                    return float(val)
+                    # The 3504 pads the sign of small/negative values, e.g. it
+                    # returns '- 0.01' for -0.01 -- strip inner spaces before float.
+                    return float(val.replace(" ", ""))
                 except ValueError:
                     last = val
             time.sleep(0.05)
