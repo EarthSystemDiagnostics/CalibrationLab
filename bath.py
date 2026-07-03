@@ -110,7 +110,8 @@ class Bath:
     """Thin wrapper around a Eurotherm 2000-series controller over Modbus RTU."""
 
     def __init__(self, port, slave=1, use_float=USE_FLOAT, decimals=DECIMALS,
-                 sp_register=SP_WRITE_REGISTER):
+                 sp_register=SP_WRITE_REGISTER, baud=BAUDRATE, parity=PARITY,
+                 bytesize=BYTESIZE, stopbits=STOPBITS, timeout=TIMEOUT):
         # Value encoding differs per controller/config (see header):
         #   use_float=True  -> IEEE754 floats in the 0x8000 region (full resolution)
         #   use_float=False -> scaled integers with `decimals` implied places
@@ -119,11 +120,11 @@ class Bath:
         self.sp_register = sp_register
         self.instr = minimalmodbus.Instrument(port, slave)
         s = self.instr.serial
-        s.baudrate = BAUDRATE
-        s.bytesize = BYTESIZE
-        s.parity   = PARITY
-        s.stopbits = STOPBITS
-        s.timeout  = TIMEOUT
+        s.baudrate = baud
+        s.bytesize = bytesize
+        s.parity   = parity
+        s.stopbits = stopbits
+        s.timeout  = timeout
         self.instr.mode = minimalmodbus.MODE_RTU
         self.instr.clear_buffers_before_each_transaction = True
 
@@ -308,6 +309,47 @@ def run_schedule(bath, plateaus, minutes, ramp, tol, window_min, timeout_min):
         print("\nInterrupted. Bath left at its current setpoint.")
 
 
+def scan(port, slaves=range(1, 8),
+         bauds=(9600, 19200, 4800, 38400, 2400, 115200),
+         parities=("N", "E", "O")):
+    """Probe serial settings until the controller answers. Read-only.
+
+    For a 'No communication with the instrument' error, this sweeps baud x parity
+    x slave address and reports the first combination that gets a Modbus reply
+    (a successful read of the PV register). It changes nothing on the controller.
+    """
+    print(f"\nScanning {port} for a responding Modbus slave (read-only) ...")
+    print("If nothing answers at all, the controller is likely in EI-Bisynch mode,")
+    print("has no comms module, or is mis-wired -- see the notes printed at the end.\n")
+    found = []
+    for baud in bauds:
+        for parity in parities:
+            for slave in slaves:
+                try:
+                    b = Bath(port, slave=slave, use_float=False, decimals=1,
+                             baud=baud, parity=parity, timeout=0.3)
+                    pv = b.instr.read_register(REG_PV, 1, signed=True)
+                    print(f"  RESPONSE  baud={baud} parity={parity} slave={slave}"
+                          f"   PV(int1)={pv:+.3f}")
+                    found.append((baud, parity, slave))
+                except Exception:
+                    pass                          # no answer with these settings
+    if found:
+        baud, parity, slave = found[0]
+        print(f"\n-> Use:  python3 bath.py --port {port} --baud {baud} "
+              f"--parity {parity} --slave {slave} --monitor")
+        print("   (then pick --encoding int1/int2/float by checking the PV value)")
+    else:
+        print("\nNo response on any combination. Most likely one of:")
+        print("  * controller comms set to EI-Bisynch, not Modbus (switch it in the")
+        print("    controller's comms/config menu -- iTools/Modbus only talk Modbus)")
+        print("  * no comms module fitted in the controller (it is optional)")
+        print("  * wrong port, or RS422/RS232 converter cable (ISO-232-432) issue,")
+        print("    TX/RX swapped, or converter not powered")
+        print("  * wrong slave address (try a wider --scan range) or stop-bit setting")
+    return found
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Isotech/Eurotherm bath control & read-out (Modbus RTU, no logging)")
@@ -315,7 +357,13 @@ def main():
     ap.add_argument("--slave", type=int, default=1, help="Modbus slave address (default 1)")
     ap.add_argument("--encoding", default="int1",
                     help="register value encoding: float|int0|int1|int2|int3 (default int1)")
+    ap.add_argument("--baud", type=int, default=BAUDRATE,
+                    help=f"serial baud rate (default {BAUDRATE})")
+    ap.add_argument("--parity", default=PARITY, choices=["N", "E", "O"],
+                    help=f"serial parity (default {PARITY})")
     # Modes (pick one; default = print current state once)
+    ap.add_argument("--scan", action="store_true",
+                    help="read-only probe of baud/parity/slave to find what answers")
     ap.add_argument("--monitor", action="store_true",
                     help="continuously read out PV/SP/OUT until Ctrl-C")
     ap.add_argument("--interval", type=float, default=5.0, help="monitor poll interval [s]")
@@ -337,7 +385,13 @@ def main():
 
     use_float, decimals = _encoding(args.encoding)
     port = args.port or pick_port("bath controller", hint="usbserial")
-    bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals)
+
+    if args.scan:
+        scan(port)
+        return
+
+    bath = Bath(port, slave=args.slave, use_float=use_float, decimals=decimals,
+                baud=args.baud, parity=args.parity)
 
     # Always show current state first -- this is also the smoke test that
     # confirms wiring, baud, slave address and value encoding are correct.

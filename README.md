@@ -243,6 +243,22 @@ Bath-automation config keys (in `param_combined.txt`, ignored by the legacy tool
 If a plateau is still not stable when its (step-scaled) timeout elapses, the run
 **measures anyway** and moves on — it never blocks the whole schedule.
 
+### "No communication with the instrument"
+
+The port opened but the controller did not reply. Sweep the serial settings
+(read-only, changes nothing on the controller):
+
+```bash
+python3 bath.py --port /dev/cu.usbserial-XXXX --scan
+```
+
+It tries baud × parity × slave address and prints the first combination that
+answers, e.g. `--baud 9600 --parity N --slave 1`. Once found, pass those flags to
+the normal read-out. If **nothing** answers, the controller is likely in
+**EI-Bisynch** mode (switch it to Modbus in the controller's comms menu), has **no
+comms module** fitted, or the RS422/RS232 converter (ISO-232-432) / wiring is the
+problem — `bath.py --scan` prints this checklist too.
+
 ---
 
 
