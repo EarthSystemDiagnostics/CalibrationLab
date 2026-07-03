@@ -102,6 +102,53 @@ class EIBisynch:
         self.ser.close()
 
 
+# Common Eurotherm EI-Bisynch mnemonics worth reading to map out a 3504.
+# We read them all (read-only) and match against the front panel: the one equal
+# to the panel setpoint is what we write to change it.
+IDENTIFY_MNEMONICS = [
+    ("PV", "process value (measured temperature)"),
+    ("SL", "setpoint (target) -- often the writable one"),
+    ("SP", "setpoint / working setpoint"),
+    ("S1", "setpoint 1"),
+    ("S2", "setpoint 2"),
+    ("WS", "working setpoint (rate-limited)"),
+    ("OP", "% output power"),
+    ("SM", "setpoint select / mode"),
+    ("RR", "setpoint ramp rate"),
+    ("HS", "setpoint high limit"),
+    ("LS", "setpoint low limit"),
+    ("TG", "target setpoint (alt.)"),
+]
+
+
+def identify(port, address=1, baud=9600, bytesize=7, parity="E"):
+    """Read a curated set of mnemonics from one Bisynch address. Read-only.
+
+    Compare the results with the 3504 front panel. The mnemonic whose value
+    equals the panel SETPOINT is the one to write with --write to steer the bath;
+    the one equal to the measured temperature confirms PV.
+    """
+    print(f"\nEI-Bisynch identify on {port}, addr {address}, framing "
+          f"{bytesize}{parity}1, read-only.")
+    print("Match each value against the 3504 panel (PV = measured, WSP = setpoint).\n")
+    dev = EIBisynch(port, baud=baud, bytesize=bytesize, parity=parity)
+    found = []
+    for mnem, label in IDENTIFY_MNEMONICS:
+        try:
+            val = dev.read_param(address, mnem)
+        except Exception:
+            val = None
+        shown = repr(val) if val else "-- (no reply / not supported)"
+        print(f"  {mnem:>3} = {shown:<28}  {label}")
+        if val:
+            found.append((mnem, val))
+    dev.close()
+    print("\nThe mnemonic equal to the panel setpoint is the writable target.")
+    print("Then, read-only test a write path first by re-reading it; only after")
+    print("that use:  python3 bisynch.py --port ... --addr 1 --write SL <value>")
+    return found
+
+
 def scan(port, addr_max=31, baud=9600, mnemonic="PV"):
     """Try every framing x address; report any EI-Bisynch device that answers."""
     print(f"\nEI-Bisynch scan on {port} (baud {baud}, reading '{mnemonic}'), read-only.")
@@ -137,6 +184,9 @@ def main():
     ap.add_argument("--port", required=True, help="serial port, e.g. /dev/cu.usbserial-XXXX")
     ap.add_argument("--baud", type=int, default=9600, help="baud rate (default 9600)")
     ap.add_argument("--scan", action="store_true", help="probe framings x addresses (read-only)")
+    ap.add_argument("--identify", action="store_true",
+                    help="read a set of common mnemonics from --addr to find the "
+                         "setpoint (read-only)")
     ap.add_argument("--addr-max", type=int, default=31, dest="addr_max",
                     help="highest address to try in --scan (default 31)")
     ap.add_argument("--addr", type=int, default=1, help="device address for --read/--write")
@@ -149,6 +199,11 @@ def main():
 
     if args.scan:
         scan(args.port, addr_max=args.addr_max, baud=args.baud)
+        return
+
+    if args.identify:
+        identify(args.port, address=args.addr, baud=args.baud,
+                 bytesize=args.bytesize, parity=args.parity)
         return
 
     dev = EIBisynch(args.port, baud=args.baud, bytesize=args.bytesize, parity=args.parity)
