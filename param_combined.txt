@@ -1,41 +1,68 @@
 # ============================================================
-#  Calibration run  -  per-experiment parameter file
-#  Format:   key: value          (order does not matter, '#' = comment)
-#  Read by calibration_log.py (logging) and calibration_auto.py (+ bath).
-#
-#  Fixed bath hardware & tuning live in  bath.ini  (ports, protocol, ramp,
-#  stability). This file only carries what changes per experiment.
+#  Calibration  -  single parameter file
+#  Format:   key: value          (order does not matter, '#' = comment,
+#            ';' separates list values).  Read by calibration_log.py (logging)
+#            and calibration_auto.py (logging + bath control).
 # ============================================================
 
+# ============================================================
+#  1) HARDWARE  -  serial ports
+#  These can change whenever a USB-serial adapter is re-plugged, so keep them
+#  handy at the top. The value is a substring hint; at start you still pick the
+#  port from the detected list (Enter accepts the matching one).
+# ============================================================
+microk_port: usbserial-A922BJHF      # MicroK bridge (SPRT reference)
+ntc_port:    usbserial-FT3GCNKB0     # SchwaRTech/AWI temperature head (NTCs)
+bath_port:   usbserial-FT3GCNKB1     # Isotech bath controller (Eurotherm 3504)
+
+# ============================================================
+#  2) EXPERIMENT  -  what is being measured this run
+# ============================================================
 # Experiment name (goes into the output file names)
 experiment: Snowmelt_Retest5Sensors
 
-# ---- MicroK bridge (SPRT reference) ----
-# Channels:   Reference ; SPRT1 [ ; SPRT2 ]
+# MicroK channels:   Reference ; SPRT1 [ ; SPRT2 ]
 microk_channels: 1;2
-# Optional port pre-selection (leave empty for no pre-selection)
-microk_port: usbserial-A922BJHF
 
-# ---- SchwaRTech/AWI Temperature head (NTCs) ----
-# What to read out (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+# NTC head readout (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
 ntc_readout: NTC1;NTC2;TestSB
 # Sensors per group ; measurement points per group
 ntc_groups: 5;60
 # Sensor node IDs
 ntc_nodes: 90;91;92;93;94
-# Optional port pre-selection
-ntc_port: usbserial-FT3GCNKB0
 
 # ============================================================
-#  Bath schedule  -  ONLY used by calibration_auto.py
-#  (calibration_log.py ignores everything below)
-#  Bath hardware/tuning is in bath.ini; override a bath.ini key here only if
-#  this experiment really needs a different value.
+#  3) BATH CONTROLLER  -  how to talk to the bath (fixed for the Libra 785)
+#  ONLY used by calibration_auto.py (calibration_log.py ignores it).
 # ============================================================
+# Protocol:  bisynch = EI-Bisynch (7E1) -> the Libra 785 Eurotherm 3504
+#            modbus  = Modbus RTU (Series-2000 controllers, over-temp limiter)
+bath_protocol: bisynch
+# Device address:  Bisynch GID/UID (the 3504 answered at 1) / Modbus slave
+bath_address:  1
+# Modbus-ONLY value encoding (ignored for bisynch): float | int1 | int2 | int3
+bath_encoding: int1
 
+# ============================================================
+#  4) BATH SCHEDULE & TUNING
+# ============================================================
 # Plateaus in deg C, in run order (1..100 values)
 plateaus:        -40; -20; 0; 20; 40
 
 # Dwell / measurement time in minutes, counted AFTER the bath is stable.
 # One value -> applies to all plateaus.  Or one value per plateau.
 plateau_minutes: 30
+
+# Approach ramp in deg C/min. The Libra 785 slews only ~2 C/min and overshoots at
+# full power, so the limit only bites below ~2 (overshoot ~= dead_time x rate;
+# 1 -> ~1 C). Empty -> max speed. One value -> all plateaus, or one per plateau.
+ramp_c_per_min: 1
+
+# Arrival / stability detection. The bath PV fluctuates ~+/-0.03 C short-term, so
+# 0.05 lets it settle cleanly (real stability is judged later from the SPRT log).
+stability_tol:              0.05   # deg C band around the setpoint
+stability_window:          10      # minutes PV must stay in band before measuring
+# Max wait for stability SCALES with the step: minutes per 10 K of travel. If it
+# is still not stable at the timeout, the run measures anyway and moves on.
+stability_timeout_per_10k: 30      # minutes per 10 K
+stability_timeout_min:     15      # floor (minutes) for small/zero steps

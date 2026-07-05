@@ -84,23 +84,15 @@ def _parse_kv(path, cfg):
     return cfg
 
 
-def read_bath_config(param_path, ini_path=None):
-    """Parse the bath-automation keys.
+def read_bath_config(param_path):
+    """Parse the bath-automation keys from the (single) parameter file.
 
-    Fixed, bath-specific settings (ports, protocol, ramp, stability tuning) live
-    in a bath INI file; the experiment parameter file only carries the plateaus
-    and dwell times. The INI is loaded first, then the parameter file, so a value
-    in the parameter file OVERRIDES the INI (and both override built-in defaults).
-    Missing INI is fine -- everything then comes from the parameter file.
-
+    Same key:value / ';'-separated-list style as the rest of the config.
     List rules for plateau_minutes and ramp_c_per_min:
         one value  -> applied to every plateau
         N values   -> one per plateau (N must equal the number of plateaus)
     """
-    cfg = {}
-    if ini_path and os.path.exists(ini_path):
-        _parse_kv(ini_path, cfg)                 # fixed bath hardware + tuning
-    _parse_kv(param_path, cfg)                    # experiment file (overrides INI)
+    cfg = _parse_kv(param_path, {})
 
     def as_list(key):
         return [x.strip() for x in cfg.get(key, "").split(";") if x.strip()]
@@ -485,8 +477,6 @@ def render_dashboard(bath, ctx):
 def main():
     ap = argparse.ArgumentParser(description="Automated bath-driven calibration run")
     ap.add_argument("--param", default="param_combined.txt", help="path to the parameter file")
-    ap.add_argument("--bath-ini", default="bath.ini", dest="bath_ini",
-                    help="path to the fixed bath hardware/tuning INI (default bath.ini)")
     ap.add_argument("--exp", default=None, help="override the experiment name")
     ap.add_argument("--dry-run", action="store_true",
                     help="connect and read the bath but never change its setpoint")
@@ -496,7 +486,7 @@ def main():
     args = ap.parse_args()
 
     c = read_config(args.param, exp_override=args.exp)
-    b = read_bath_config(args.param, ini_path=args.bath_ini)
+    b = read_bath_config(args.param)
 
     # Which readout channels are NTC thermistors -> live temperature per node.
     # Keeps the config's order; non-NTC readouts (TempADC/GND/...) are not shown.
@@ -548,10 +538,6 @@ def main():
         m.write(f"Stability        : tol={b['tol']} C, window={b['window_min']} min, "
                 f"timeout={b['timeout_per_10k']} min/10K (floor {b['timeout_floor']} min)\n")
         m.write(f"Plateau file     : {plateau_file}\n")
-        if args.bath_ini and os.path.exists(args.bath_ini):
-            m.write(f"\n--- Verbatim copy of {args.bath_ini} ---\n")
-            with open(args.bath_ini) as ini:
-                m.write(ini.read())
     print("Meta file written:", meta_file)
 
     # --- Connect to the bath first: this is the smoke test for wiring/baud/

@@ -39,6 +39,7 @@ def read_config(param_path, exp_override=None):
             if not line or line.startswith("#") or ":" not in line:
                 continue
             key, val = line.split(":", 1)
+            val = val.split("#", 1)[0]          # drop inline comments after the value
             cfg[key.strip().lower()] = val.strip()
 
     def as_list(key):
