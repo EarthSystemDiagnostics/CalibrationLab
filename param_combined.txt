@@ -1,7 +1,10 @@
 # ============================================================
-#  Combined calibration logging  -  parameter file
+#  Calibration run  -  per-experiment parameter file
 #  Format:   key: value          (order does not matter, '#' = comment)
-#  Read by calibration_log.py (MicroK + SchwaRTech/AWI Temperature head).
+#  Read by calibration_log.py (logging) and calibration_auto.py (+ bath).
+#
+#  Fixed bath hardware & tuning live in  bath.ini  (ports, protocol, ramp,
+#  stability). This file only carries what changes per experiment.
 # ============================================================
 
 # Experiment name (goes into the output file names)
@@ -24,47 +27,15 @@ ntc_nodes: 90;91;92;93;94
 ntc_port: usbserial-FT3GCNKB0
 
 # ============================================================
-#  Bath automation  -  ONLY used by calibration_auto.py
+#  Bath schedule  -  ONLY used by calibration_auto.py
 #  (calibration_log.py ignores everything below)
+#  Bath hardware/tuning is in bath.ini; override a bath.ini key here only if
+#  this experiment really needs a different value.
 # ============================================================
 
-# Optional port pre-selection for the Isotech bath controller
-bath_port: usbserial-FT3GCNKB1
-# Control protocol for the bath's main controller:
-#   bisynch = EI-Bisynch (7E1) -- the Libra 785 Eurotherm 3504 (CONFIRMED here)
-#   modbus  = Modbus RTU (Series-2000 controllers, and the over-temp limiter)
-bath_protocol:     bisynch
-# Device address. Bisynch: GID/UID address (the 3504 answered at 1).
-# Modbus: slave address (the over-temp limiter is at 2).
-bath_address:      1
-# Modbus-ONLY value encoding (ignored for bisynch). VERIFY ONCE on the real unit:
-#   int1   = scaled integer, 1 decimal  (e.g. 2503 -> 250.3 C)
-#   int2   = scaled integer, 2 decimals (0.01 C)
-#   float  = full-resolution IEEE floats (advanced; word order not verified)
-bath_encoding:     int1
-
 # Plateaus in deg C, in run order (1..100 values)
-plateaus:          -40; -20; 0; 20; 40
+plateaus:        -40; -20; 0; 20; 40
 
 # Dwell / measurement time in minutes, counted AFTER the bath is stable.
 # One value -> applies to all plateaus.  Or one value per plateau.
-plateau_minutes:   30
-
-# Approach ramp in deg C/min. The Libra 785 slews only ~2 C/min at full power and
-# still overshoots ~2 C (dead time + PID), so the rate limit ONLY helps when set
-# BELOW ~2 -- a value >=2 does nothing. Overshoot ~= dead_time x rate, so 1 -> ~1 C,
-# 0.5 -> ~0.5 C. Trade-off: slower transitions (a 60 K step at 1 C/min ~= 1 h).
-# One value -> all plateaus, or one per plateau. Empty -> max speed (overshoots).
-ramp_c_per_min: 1
-
-# Arrival / stability detection
-# NOTE: the Libra 785's own PV fluctuates ~+/-0.03 C short-term, so a band tighter
-# than that keeps resetting the "held in band" timer. 0.05 lets it settle cleanly;
-# the real measurement stability is judged afterwards from the logged SPRT.
-stability_tol:     0.05        # deg C band around the setpoint
-stability_window:  10          # minutes PV must stay in band before measuring
-# Max wait for stability SCALES with the step size: this many minutes per 10 K
-# the bath has to travel (measured from the current PV). If it is still not
-# stable when the timeout elapses, the run measures anyway and moves on.
-stability_timeout_per_10k: 30  # minutes per 10 K
-stability_timeout_min:     15  # floor in minutes for small/zero steps
+plateau_minutes: 30

@@ -71,16 +71,9 @@ def make_bath(bath_port, b):
 MAX_PLATEAUS = 100
 
 
-def read_bath_config(param_path):
-    """Parse the bath-automation keys from the parameter file.
-
-    Same key:value / ';'-separated-list style as the rest of the config.
-    List rules for plateau_minutes and ramp_c_per_min:
-        one value  -> applied to every plateau
-        N values   -> one per plateau (N must equal the number of plateaus)
-    """
-    cfg = {}
-    with open(param_path, "r") as file:
+def _parse_kv(path, cfg):
+    """Merge `key: value` lines from `path` into cfg (later files win)."""
+    with open(path, "r") as file:
         for line in file:
             line = line.strip()
             if not line or line.startswith("#") or ":" not in line:
@@ -88,6 +81,26 @@ def read_bath_config(param_path):
             key, val = line.split(":", 1)
             val = val.split("#", 1)[0]          # drop inline comments after the value
             cfg[key.strip().lower()] = val.strip()
+    return cfg
+
+
+def read_bath_config(param_path, ini_path=None):
+    """Parse the bath-automation keys.
+
+    Fixed, bath-specific settings (ports, protocol, ramp, stability tuning) live
+    in a bath INI file; the experiment parameter file only carries the plateaus
+    and dwell times. The INI is loaded first, then the parameter file, so a value
+    in the parameter file OVERRIDES the INI (and both override built-in defaults).
+    Missing INI is fine -- everything then comes from the parameter file.
+
+    List rules for plateau_minutes and ramp_c_per_min:
+        one value  -> applied to every plateau
+        N values   -> one per plateau (N must equal the number of plateaus)
+    """
+    cfg = {}
+    if ini_path and os.path.exists(ini_path):
+        _parse_kv(ini_path, cfg)                 # fixed bath hardware + tuning
+    _parse_kv(param_path, cfg)                    # experiment file (overrides INI)
 
     def as_list(key):
         return [x.strip() for x in cfg.get(key, "").split(";") if x.strip()]
@@ -157,6 +170,60 @@ def plateau_timeout_min(b, delta_k):
     """Timeout in minutes for a step of |delta_k| Kelvin: per_10k per 10 K,
     but never below the floor (so tiny steps still get a fair chance)."""
     return max(b["timeout_floor"], b["timeout_per_10k"] * abs(delta_k) / 10.0)
+
+
+# --------------------------------------------------------------------------
+# Run-time estimate: how long the whole schedule will take
+# --------------------------------------------------------------------------
+NATURAL_SLEW = 2.0      # deg C/min the Libra 785 manages at full power
+
+
+def estimate_schedule(b, pv_start):
+    """Per-plateau time budget [minutes], starting from bath temperature pv_start.
+
+    For each plateau we give a 'probable' and a 'safe' (worst-case) duration:
+      safe     = stability timeout + dwell   (the run measures anyway at timeout,
+                 so this is a hard upper bound)
+      probable = ramp/approach + stability window + dwell, but never more than safe
+    Ramp time uses the configured rate (capped at the bath's natural slew), or the
+    natural slew when no rate limit is set.
+    """
+    rows, prev = [], pv_start
+    for sp, dwell, ramp in zip(b["plateaus"], b["minutes"], b["ramps"]):
+        delta   = sp - prev
+        timeout = plateau_timeout_min(b, delta)
+        rate    = NATURAL_SLEW if (ramp is None or ramp <= 0) else min(ramp, NATURAL_SLEW)
+        ramp_min = abs(delta) / rate if rate > 0 else 0.0
+        settle_prob = min(ramp_min + b["window_min"], timeout)   # can't beat the timeout
+        safe = timeout + dwell
+        rows.append(dict(sp=sp, delta=delta, timeout=timeout, dwell=dwell,
+                         probable=settle_prob + dwell, safe=safe))
+        prev = sp
+    return rows
+
+
+def _fmt_hm(minutes):
+    m = int(round(max(0.0, minutes)))
+    return f"{m // 60}h{m % 60:02d}m"
+
+
+def _clock(epoch):
+    return time.strftime("%a %H:%M", time.localtime(epoch))
+
+
+def remaining_estimate(rows, idx, phase, plateau_elapsed_min, dwell_remaining_min):
+    """(probable_min, safe_min) still to go, given we are in plateau `idx` (1-based),
+    `phase` = 'SETTLE' or 'DWELL'. Future plateaus use their full budget."""
+    fut = rows[idx:]                                   # plateaus after the current one
+    fut_prob = sum(r["probable"] for r in fut)
+    fut_safe = sum(r["safe"] for r in fut)
+    cur = rows[idx - 1]
+    if phase == "SETTLE":
+        cur_prob = max(0.0, (cur["probable"] - cur["dwell"]) - plateau_elapsed_min) + cur["dwell"]
+        cur_safe = max(0.0, cur["timeout"] - plateau_elapsed_min) + cur["dwell"]
+    else:                                              # DWELL: settle already done
+        cur_prob = cur_safe = dwell_remaining_min
+    return cur_prob + fut_prob, cur_safe + fut_safe
 
 
 # --------------------------------------------------------------------------
@@ -385,6 +452,17 @@ def render_dashboard(bath, ctx):
              f"OUT {bath_read('read_output','{:.1f}')} %   "
              f"rate {bath_read('read_ramp_rate','{:g}')}")
     L.append(f" SPRT      {sprt_status(ctx['microk_file'])}")
+    est = ctx.get("est")
+    if est:
+        if ctx["phase"] == "SETTLE":
+            elapsed = (time.time() - ctx["plateau_start"]) / 60.0
+            rp, rs = remaining_estimate(est, ctx["idx"], "SETTLE", elapsed, 0.0)
+        else:
+            rp, rs = remaining_estimate(est, ctx["idx"], "DWELL", 0.0,
+                                        ctx.get("dwell_remaining", 0.0) / 60.0)
+        now = time.time()
+        L.append(f" ETA       probable ~{_clock(now + rp*60)} (~{_fmt_hm(rp)})    "
+                 f"latest <= {_clock(now + rs*60)} (<= {_fmt_hm(rs)})")
     L.append("-" * 64)
     L.append(" NTC [C] (raw, mean-S4):")
     rows = latest_ntc_temps_by_group(ctx["logger_file"], channels=ctx["ntc_channels"])
@@ -407,6 +485,8 @@ def render_dashboard(bath, ctx):
 def main():
     ap = argparse.ArgumentParser(description="Automated bath-driven calibration run")
     ap.add_argument("--param", default="param_combined.txt", help="path to the parameter file")
+    ap.add_argument("--bath-ini", default="bath.ini", dest="bath_ini",
+                    help="path to the fixed bath hardware/tuning INI (default bath.ini)")
     ap.add_argument("--exp", default=None, help="override the experiment name")
     ap.add_argument("--dry-run", action="store_true",
                     help="connect and read the bath but never change its setpoint")
@@ -416,7 +496,7 @@ def main():
     args = ap.parse_args()
 
     c = read_config(args.param, exp_override=args.exp)
-    b = read_bath_config(args.param)
+    b = read_bath_config(args.param, ini_path=args.bath_ini)
 
     # Which readout channels are NTC thermistors -> live temperature per node.
     # Keeps the config's order; non-NTC readouts (TempADC/GND/...) are not shown.
@@ -468,6 +548,10 @@ def main():
         m.write(f"Stability        : tol={b['tol']} C, window={b['window_min']} min, "
                 f"timeout={b['timeout_per_10k']} min/10K (floor {b['timeout_floor']} min)\n")
         m.write(f"Plateau file     : {plateau_file}\n")
+        if args.bath_ini and os.path.exists(args.bath_ini):
+            m.write(f"\n--- Verbatim copy of {args.bath_ini} ---\n")
+            with open(args.bath_ini) as ini:
+                m.write(ini.read())
     print("Meta file written:", meta_file)
 
     # --- Connect to the bath first: this is the smoke test for wiring/baud/
@@ -478,7 +562,8 @@ def main():
         if hasattr(bath, "read_ramp_rate"):
             rr = bath.read_ramp_rate()
             rate_str = f"  RAMP={'off' if rr == 0 else f'{rr:g} C/min'}"
-        print(f"\nBath connected ({b['protocol']}). PV={bath.read_pv():+.4f} C  "
+        pv0 = bath.read_pv()
+        print(f"\nBath connected ({b['protocol']}). PV={pv0:+.4f} C  "
               f"SP={bath.read_setpoint():+.4f} C  OUT={bath.read_output():.1f} %{rate_str}")
     except Exception as e:
         sys.exit(
@@ -486,6 +571,16 @@ def main():
             "Check: RS232 cable/converter, the bath_protocol (bisynch vs modbus), "
             "the address, and — for modbus — baud/parity and value encoding."
         )
+
+    # Time estimate for the whole schedule (from the current bath temperature).
+    est = estimate_schedule(b, pv0)
+    tp = sum(r["probable"] for r in est)
+    ts = sum(r["safe"] for r in est)
+    now = time.time()
+    print(f"\nEstimated run time ({len(est)} plateaus, from PV {pv0:+.1f} C):")
+    print(f"   probable ~{_fmt_hm(tp)}   -> finish ~{_clock(now + tp * 60)}")
+    print(f"   latest  <= {_fmt_hm(ts)}   -> finish <= {_clock(now + ts * 60)}")
+    print("   (latest is the hard bound from the stability timeouts + dwell.)")
 
     if args.dry_run:
         print("\n--dry-run: not moving the bath. Exiting.")
@@ -528,12 +623,19 @@ def main():
             bath.set_ramp_rate(ramp)          # None/0 -> rate limit off (max speed)
             bath.set_setpoint(sp)
             t_command = datetime.now()
+            plateau_t0 = time.time()
+
+            # Remaining-time estimate at the start of this plateau (SETTLE phase).
+            rp, rs = remaining_estimate(est, i, "SETTLE", 0.0, 0.0)
+            say(f"  ETA: probable ~{_clock(time.time() + rp*60)} (~{_fmt_hm(rp)} left)"
+                f"  |  latest <= {_clock(time.time() + rs*60)} (<= {_fmt_hm(rs)} left)")
 
             # Shared dashboard context for this plateau (used only when --dashboard).
             base = dict(exp=c["exp"], run_stamp=run_stamp, t0=run_t0, idx=i,
                         n=n_plateaus, setpoint=sp, ramp=ramp_str, timeout_min=timeout,
                         window_s=b["window_min"] * 60, microk_file=microk_file,
-                        logger_file=logger_file, ntc_channels=ntc_channels)
+                        logger_file=logger_file, ntc_channels=ntc_channels,
+                        est=est, plateau_start=plateau_t0)
             on_poll = None
             if dash:
                 on_poll = lambda pv, inb, held: render_dashboard(

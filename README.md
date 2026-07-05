@@ -255,24 +255,39 @@ baud/parity, Modbus slave address, and the **value encoding**
 (`bath_encoding: float` vs `int1/int2/int3`). Run `--dry-run` first — if PV/SP
 read back as sensible numbers, the settings are right.
 
-Bath-automation config keys (in `param_combined.txt`, ignored by the legacy tool):
+**Config split.** Fixed bath hardware + tuning lives in **`bath.ini`** (loaded
+automatically; override with `--bath-ini`); the per-experiment `param_combined.txt`
+only carries the schedule. `bath.ini` values are defaults — a key repeated in the
+parameter file overrides the INI for that run.
+
+`bath.ini` — fixed bath hardware + tuning (rarely changes):
 
 | Key                 | Meaning                                                          |
 |---------------------|------------------------------------------------------------------|
-| `bath_port`         | Optional bath-controller port hint (pre-selection only)          |
+| `bath_port`         | Bath-controller port hint (pre-selection)                        |
 | `bath_protocol`     | `bisynch` (default; the 3504) \| `modbus` (Series-2000 units)    |
 | `bath_address`      | Bisynch GID/UID address (the 3504 = `1`) / Modbus slave address  |
 | `bath_encoding`     | **Modbus only:** `float`\|`int1`\|`int2`\|`int3` register scaling |
-| `plateaus`          | 1–20 setpoints in °C, in run order (`;`-separated)               |
-| `plateau_minutes`   | Dwell after stability; one value → all, or one per plateau       |
-| `ramp_c_per_min`    | Optional approach ramp; empty → max speed; one → all, or per pl. |
+| `ramp_c_per_min`    | Approach ramp; empty → max speed; one → all, or per plateau      |
 | `stability_tol`             | °C band around the setpoint counting as "arrived"        |
 | `stability_window`          | minutes PV must stay in band before measuring            |
 | `stability_timeout_per_10k` | max wait scales with step: minutes per 10 K of travel    |
 | `stability_timeout_min`     | floor (minutes) for small/zero steps                     |
 
+`param_combined.txt` — per experiment (bath part; ignored by the legacy tool):
+
+| Key                 | Meaning                                                          |
+|---------------------|------------------------------------------------------------------|
+| `plateaus`          | 1–100 setpoints in °C, in run order (`;`-separated)             |
+| `plateau_minutes`   | Dwell after stability; one value → all, or one per plateau       |
+
 If a plateau is still not stable when its (step-scaled) timeout elapses, the run
 **measures anyway** and moves on — it never blocks the whole schedule.
+
+**Time estimate.** At start (and, in `--dashboard`, continuously) the run prints a
+**probable** finish time and a **latest** finish time. "Latest" is a hard upper
+bound = Σ(stability timeout + dwell) per plateau, since a plateau always measures
+at its timeout; "probable" assumes each plateau settles in ramp + window time.
 
 ### "No communication with the instrument"
 
