@@ -1,0 +1,72 @@
+# ============================================================
+#  Calibration  -  24 h down-sweep with brackets + up-anchors
+#  Same single-file format as param_combined.txt. Run with:
+#      python3 calibration_auto.py --param param_24h.txt --dashboard
+#
+#  Design (empirical, from the recalib runs):
+#   * Plateaus are gated on dT/dt of the SPRT, not a fixed clock: a plateau ends
+#     when |drift| < 3 mK and sd < 8 mK over the trailing 30 min (slow creep is
+#     harmless, live drift is not). plateau_minutes below is the MIN soak floor.
+#   * Median settle ~70 min; the cold end (-31/-35) creeps 180-200 min -> long
+#     floors there. Largest biases come after big jumps/reversals, so we step in
+#     small ~4 C increments and add up-anchors to decorrelate time from T.
+#   * ~15 plateaus fit in ~24 h; more would just cram the day.
+#   * Symmetric (down then partway up) on purpose: common-mode drift is ~+1.5
+#     mK/day, so time must be made orthogonal to temperature or the fitted
+#     coefficients bend. The 4 up-anchors re-visit interior temps LATER in time.
+# ============================================================
+
+# ------------------------------------------------------------
+#  1) HARDWARE  -  serial ports (substring hints; you still pick at start)
+# ------------------------------------------------------------
+microk_port: usbserial-A922BJHF      # MicroK bridge (SPRT reference)
+ntc_port:    usbserial-FT3GCNKB0     # SchwaRTech/AWI temperature head (NTCs)
+bath_port:   usbserial-FT3GCNKB1     # Isotech bath controller (Eurotherm 3504)
+
+# ------------------------------------------------------------
+#  2) EXPERIMENT
+# ------------------------------------------------------------
+experiment: Recalib24h
+
+# MicroK channels:  Reference ; SPRT1 [ ; SPRT2 ]  (gate uses the first SPRT)
+microk_channels: 1;2
+
+# NTC head readout and node list -- EDIT to match the sensors actually loaded.
+ntc_readout: NTC1;NTC2;TestSB
+ntc_groups:  5;60
+ntc_nodes:   90;91;92;93;94
+
+# ------------------------------------------------------------
+#  3) BATH CONTROLLER  (fixed for the Libra 785)
+# ------------------------------------------------------------
+bath_protocol: bisynch
+bath_address:  1
+bath_encoding: int1
+
+# ------------------------------------------------------------
+#  4) SCHEDULE  -  11 down-sweep setpoints (+5 .. -35, ~4 C steps) then 4 up-anchors
+# ------------------------------------------------------------
+#            |----------------- down-sweep (+5 -> -35) -----------------|  |-- up-anchors --|
+plateaus:         5;   1;  -3;  -7; -11; -15; -19; -23; -27; -31; -35;   -25; -15;  -5;   3
+
+# Minimum soak (min) per plateau BEFORE the drift gate may accept. Cold plateaus
+# creep for hours, so their floors are long; the gate ends warm ones sooner.
+plateau_minutes:  30;  30;  30;  40;  40;  45;  50;  60;  90; 120; 180;   45;  40;  30;  30
+
+# Approach ramp: below the natural slew to keep the overshoot small.
+ramp_c_per_min: 1
+
+# ------------------------------------------------------------
+#  5) GATE + coarse arrival (see param_combined.txt for full notes)
+# ------------------------------------------------------------
+gate_mode:          drift
+gate_drift_mk:      3
+gate_sd_mk:         8
+gate_window_min:    30
+gate_poll_s:        30
+gate_max_extra_min: 120
+
+stability_tol:              0.05
+stability_window:          10
+stability_timeout_per_10k: 30
+stability_timeout_min:     15

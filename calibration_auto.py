@@ -49,6 +49,7 @@ from bath import Bath
 from bisynch import BisynchBath
 import sprt
 import ntc
+import gate
 
 
 def make_bath(bath_port, b):
@@ -91,6 +92,11 @@ def read_bath_config(param_path):
     List rules for plateau_minutes and ramp_c_per_min:
         one value  -> applied to every plateau
         N values   -> one per plateau (N must equal the number of plateaus)
+
+    plateau_minutes means different things per gate_mode:
+        fixed  -> the bath dwells exactly this long, then we measure the window.
+        drift  -> the MINIMUM soak time before the SPRT drift/sd gate may accept
+                  (cold plateaus creep for hours, so give the cold end e.g. 180).
     """
     cfg = _parse_kv(param_path, {})
 
@@ -155,6 +161,29 @@ def read_bath_config(param_path):
     # If the bath is still not stable when the timeout elapses, we measure anyway.
     b["timeout_per_10k"] = float(cfg.get("stability_timeout_per_10k", "30"))
     b["timeout_floor"]   = float(cfg.get("stability_timeout_min", "15"))
+
+    # --- Plateau gating (drift = new default; fixed = legacy fixed-time dwell) ---
+    # In 'drift' mode a plateau ends when the SPRT reference stops moving:
+    # |drift over the trailing window| < gate_drift_mk AND scatter < gate_sd_mk,
+    # provided at least the per-plateau min soak (plateau_minutes) has elapsed.
+    # The bath's own PV can't judge this (10 mK resolution), so we gate on the
+    # MicroK SPRT. 'fixed' keeps the old behaviour (dwell exactly plateau_minutes).
+    b["gate_mode"] = cfg.get("gate_mode", "drift").lower()
+    if b["gate_mode"] not in ("drift", "fixed"):
+        sys.exit(f"gate_mode must be 'drift' or 'fixed' (got {b['gate_mode']!r})")
+    b["gate"] = {
+        "drift_mk":  float(cfg.get("gate_drift_mk", "3")),
+        "sd_mk":     float(cfg.get("gate_sd_mk", "8")),
+        "window_min": float(cfg.get("gate_window_min", "30")),
+        "poll_s":    float(cfg.get("gate_poll_s", "30")),
+        # Hard cap per plateau = its min soak + this, so a plateau that never
+        # settles (drifting reference) still ends and gets flagged, not blocks.
+        "max_extra_min": float(cfg.get("gate_max_extra_min", "120")),
+        # Only for the up-front time estimate: the empirical median settle (~70 min).
+        "typical_min": float(cfg.get("gate_typical_min", "70")),
+        # Channel label to gate on; empty -> first configured SPRT channel.
+        "channel":   cfg.get("gate_channel", "").strip(),
+    }
     return b
 
 
@@ -173,23 +202,35 @@ NATURAL_SLEW = 2.0      # deg C/min the Libra 785 manages at full power
 def estimate_schedule(b, pv_start):
     """Per-plateau time budget [minutes], starting from bath temperature pv_start.
 
-    For each plateau we give a 'probable' and a 'safe' (worst-case) duration:
-      safe     = stability timeout + dwell   (the run measures anyway at timeout,
-                 so this is a hard upper bound)
-      probable = ramp/approach + stability window + dwell, but never more than safe
-    Ramp time uses the configured rate (capped at the bath's natural slew), or the
+    Each plateau has a coarse 'settle' part (bath PV reaching the setpoint) and a
+    'measure' part. We give a 'probable' and a 'safe' (worst-case) duration:
+      safe     = settle timeout + worst-case measure  (a hard upper bound)
+      probable = ramp/approach + settle window + probable measure
+    Measure part depends on gate_mode:
+      fixed -> exactly plateau_minutes.
+      drift -> probable = max(min_soak, empirical median ~70 min);
+               worst   = min_soak + gate_max_extra (the hard soak cap).
+    Ramp time uses the configured rate (capped at the natural slew), or the
     natural slew when no rate limit is set.
     """
+    drift = b["gate_mode"] == "drift"
+    g = b["gate"]
     rows, prev = [], pv_start
-    for sp, dwell, ramp in zip(b["plateaus"], b["minutes"], b["ramps"]):
+    for sp, minutes, ramp in zip(b["plateaus"], b["minutes"], b["ramps"]):
         delta   = sp - prev
         timeout = plateau_timeout_min(b, delta)
         rate    = NATURAL_SLEW if (ramp is None or ramp <= 0) else min(ramp, NATURAL_SLEW)
         ramp_min = abs(delta) / rate if rate > 0 else 0.0
         settle_prob = min(ramp_min + b["window_min"], timeout)   # can't beat the timeout
-        safe = timeout + dwell
-        rows.append(dict(sp=sp, delta=delta, timeout=timeout, dwell=dwell,
-                         probable=settle_prob + dwell, safe=safe))
+        if drift:
+            meas_prob = max(minutes, g["typical_min"])           # min soak, but >= median
+            meas_safe = minutes + g["max_extra_min"]             # hard soak cap
+        else:
+            meas_prob = meas_safe = minutes
+        rows.append(dict(sp=sp, delta=delta, timeout=timeout,
+                         dwell=meas_prob, safe_dwell=meas_safe,
+                         probable=settle_prob + meas_prob,
+                         safe=timeout + meas_safe))
         prev = sp
     return rows
 
@@ -204,15 +245,19 @@ def _clock(epoch):
 
 
 def remaining_estimate(rows, idx, phase, plateau_elapsed_min, dwell_remaining_min):
-    """(probable_min, safe_min) still to go, given we are in plateau `idx` (1-based),
-    `phase` = 'SETTLE' or 'DWELL'. Future plateaus use their full budget."""
+    """(probable_min, safe_min) still to go, given we are in plateau `idx` (1-based).
+    `phase` = 'SETTLE' (approaching), 'GATE' (soaking, gated) or 'DWELL' (fixed).
+    Future plateaus use their full budget."""
     fut = rows[idx:]                                   # plateaus after the current one
     fut_prob = sum(r["probable"] for r in fut)
     fut_safe = sum(r["safe"] for r in fut)
     cur = rows[idx - 1]
     if phase == "SETTLE":
         cur_prob = max(0.0, (cur["probable"] - cur["dwell"]) - plateau_elapsed_min) + cur["dwell"]
-        cur_safe = max(0.0, cur["timeout"] - plateau_elapsed_min) + cur["dwell"]
+        cur_safe = max(0.0, cur["timeout"] - plateau_elapsed_min) + cur["safe_dwell"]
+    elif phase == "GATE":                              # soaking: elapsed counts down soak
+        cur_prob = max(0.0, cur["dwell"] - plateau_elapsed_min)
+        cur_safe = max(0.0, cur["safe_dwell"] - plateau_elapsed_min)
     else:                                              # DWELL: settle already done
         cur_prob = cur_safe = dwell_remaining_min
     return cur_prob + fut_prob, cur_safe + fut_safe
@@ -224,12 +269,24 @@ def remaining_estimate(rows, idx, phase, plateau_elapsed_min, dwell_remaining_mi
 def open_plateaus_file(path, b):
     fh = open(path, "w")
     fh.write("# Plateau schedule for automated calibration run\n")
-    fh.write(f"# stability: tol={b['tol']} C, window={b['window_min']} min, "
+    fh.write(f"# gate_mode: {b['gate_mode']}\n")
+    fh.write(f"# coarse settle: tol={b['tol']} C, window={b['window_min']} min, "
              f"timeout={b['timeout_per_10k']} min/10K (floor {b['timeout_floor']} min)\n")
-    fh.write("# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; "
-             "t_dwell_start; t_dwell_end; stable_ok\n")
-    fh.write("# each row is written when its dwell STARTS (survives Ctrl-C); "
-             "t_dwell_end is the planned end = t_dwell_start + dwell.\n")
+    if b["gate_mode"] == "drift":
+        g = b["gate"]
+        fh.write(f"# drift gate: |drift|<{g['drift_mk']:g} mK and sd<{g['sd_mk']:g} mK "
+                 f"over the trailing {g['window_min']:g} min on {g['channel'] or 'ref SPRT'}; "
+                 f"min soak = plateau_minutes, cap = min soak + {g['max_extra_min']:g} min\n")
+        fh.write("# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; "
+                 "t_dwell_start; t_dwell_end; gate_ok; drift_mK; sd_mK; n\n")
+        fh.write("# [t_dwell_start, t_dwell_end] is the accepted trailing average window; "
+                 "average the reference/DUT over it. Row is written when the gate ACCEPTS "
+                 "(end of soak); an interrupted soak leaves no row -- recover from raw logs.\n")
+    else:
+        fh.write("# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; "
+                 "t_dwell_start; t_dwell_end; stable_ok\n")
+        fh.write("# each row is written when its dwell STARTS (survives Ctrl-C); "
+                 "t_dwell_end is the planned end = t_dwell_start + dwell.\n")
     fh.flush()
     return fh
 
@@ -266,6 +323,36 @@ def sprt_status(microk_file):
         return "SPRT=--.-- C"
     temp, channel = res
     return f"SPRT={temp:+.4f} C ({channel})"
+
+
+def sprt_window_stats(microk_file, channel, window_min, max_bytes=262144):
+    """Tail the MicroK log and return gate.window_stats() over the trailing window
+    for the reference SPRT `channel` (None -> last-seen). None if not enough data.
+
+    Decoupled from the logger thread (it keeps writing+flushing); we just read the
+    tail. 256 KB comfortably covers a 30-min window at the MicroK's poll rate.
+    """
+    try:
+        with open(microk_file, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes))
+            text = f.read().decode("utf-8", "replace")
+        samples = gate.parse_sprt_samples(text, channel=channel or None)
+        return gate.window_stats(samples, window_min)
+    except Exception:
+        return None
+
+
+def gate_line(stats, g):
+    """Compact 'drift/sd vs limits' string for status displays."""
+    if not stats:
+        return f"gate: SPRT settling (need {g['window_min']:.0f} min of data)"
+    d_ok = "ok " if stats["drift_mk"] < g["drift_mk"] else "HI "
+    s_ok = "ok " if stats["sd_mk"] < g["sd_mk"] else "HI "
+    return (f"drift {stats['drift_mk']:5.1f} mK [{d_ok}<{g['drift_mk']:g}]   "
+            f"sd {stats['sd_mk']:5.1f} mK [{s_ok}<{g['sd_mk']:g}]   "
+            f"(n={stats['n']}, {stats['span_min']:.0f} min)")
 
 
 def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
@@ -436,6 +523,10 @@ def render_dashboard(bath, ctx):
     if ctx["phase"] == "SETTLE":
         L.append(f" Phase     SETTLE  held {ctx['held']:.0f}/{ctx['window_s']:.0f} s"
                  f"    (timeout {ctx['timeout_min']:.0f} min)")
+    elif ctx["phase"] == "GATE":
+        L.append(f" Phase     GATE    soak {ctx['soak_min']:.0f} min"
+                 f"   (min {ctx['min_soak']:.0f}, cap {ctx['max_soak']:.0f})")
+        L.append(f"           {gate_line(ctx.get('gate'), ctx['gcfg'])}")
     else:
         note = "" if ctx.get("stable_ok", True) else "  [was NOT stable -> check]"
         L.append(f" Phase     DWELL   {ctx['dwell_remaining']/60:.1f} min left{note}")
@@ -449,6 +540,8 @@ def render_dashboard(bath, ctx):
         if ctx["phase"] == "SETTLE":
             elapsed = (time.time() - ctx["plateau_start"]) / 60.0
             rp, rs = remaining_estimate(est, ctx["idx"], "SETTLE", elapsed, 0.0)
+        elif ctx["phase"] == "GATE":
+            rp, rs = remaining_estimate(est, ctx["idx"], "GATE", ctx["soak_min"], 0.0)
         else:
             rp, rs = remaining_estimate(est, ctx["idx"], "DWELL", 0.0,
                                         ctx.get("dwell_remaining", 0.0) / 60.0)
@@ -472,6 +565,43 @@ def render_dashboard(bath, ctx):
 
 
 # --------------------------------------------------------------------------
+# dT/dt plateau gating (drift mode): soak until the SPRT reference is quiet
+# --------------------------------------------------------------------------
+def gate_plateau(bath, microk_file, gate_channel, g, min_soak_min, max_soak_min,
+                 base_ctx, dash, say, tag):
+    """Hold at the setpoint and soak until the reference SPRT stops moving.
+
+    Gates on the SPRT (mK resolution) rather than the bath PV (10 mK): accept once
+    the trailing-window drift and scatter are both under limit AND at least the
+    per-plateau minimum soak has elapsed. A hard cap (max_soak_min) guarantees the
+    plateau ends even if the reference keeps drifting (then it is flagged).
+
+    Returns (gate_ok, t_accept, stats). The accepted measurement window is the
+    trailing g['window_min'] minutes ending at t_accept.
+    """
+    start = time.time()
+    last_stats = None
+    while True:
+        soak_min = (time.time() - start) / 60.0
+        stats = sprt_window_stats(microk_file, gate_channel, g["window_min"])
+        if stats:
+            last_stats = stats
+        passed = gate.gate_ok(stats, g["window_min"], g["drift_mk"], g["sd_mk"])
+        if passed and soak_min >= min_soak_min:
+            return True, datetime.now(), stats
+        if soak_min >= max_soak_min:
+            return False, datetime.now(), last_stats
+        if dash:
+            render_dashboard(bath, dict(base_ctx, phase="GATE", soak_min=soak_min,
+                                        min_soak=min_soak_min, max_soak=max_soak_min,
+                                        gate=stats, gcfg=g))
+        else:
+            say(f"  [{tag}] soak {soak_min:4.0f} min   {gate_line(stats, g)}")
+        # Sleep one poll interval; keep Ctrl-C responsive, no countdown spam.
+        interruptible_sleep(g["poll_s"], f"{tag} gate", on_tick=lambda rem: None)
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 def main():
@@ -488,6 +618,10 @@ def main():
     c = read_config(args.param, exp_override=args.exp)
     b = read_bath_config(args.param)
 
+    # Gate on the reference SPRT by default (the first configured SPRT channel).
+    if b["gate_mode"] == "drift" and not b["gate"]["channel"] and c["sprt_chs"]:
+        b["gate"]["channel"] = "Channel" + c["sprt_chs"][0]
+
     # Which readout channels are NTC thermistors -> live temperature per node.
     # Keeps the config's order; non-NTC readouts (TempADC/GND/...) are not shown.
     ntc_channels = [ch for ch in c["active"] if ch in ntc.NTC_CHANNELS] or list(ntc.NTC_CHANNELS)
@@ -500,10 +634,18 @@ def main():
     print("Bath       : protocol", b["protocol"], "| address", b["address"],
           ("| encoding " + enc_desc if b["protocol"] == "modbus" else ""),
           "| hint", b["port_hint"])
+    if b["gate_mode"] == "drift":
+        g = b["gate"]
+        print(f"Gate       : drift <{g['drift_mk']:g} mK & sd <{g['sd_mk']:g} mK over "
+              f"{g['window_min']:g} min on {g['channel'] or 'ref SPRT'}"
+              f"  (min soak = plateau_minutes, cap +{g['max_extra_min']:g} min)")
+    else:
+        print("Gate       : fixed-time dwell")
+    soak_word = "min soak" if b["gate_mode"] == "drift" else "dwell"
     print("Plateaus   :")
     for i, (sp, mn, rp) in enumerate(zip(b["plateaus"], b["minutes"], b["ramps"]), 1):
         ramp = "max speed" if rp is None else f"{rp} C/min"
-        print(f"   {i:2d}. {sp:+7.2f} C   dwell {mn:g} min   ramp {ramp}")
+        print(f"   {i:2d}. {sp:+7.2f} C   {soak_word} {mn:g} min   ramp {ramp}")
 
     description = input("\nDescription of this calibration (press Enter to confirm): ").strip()
 
@@ -533,10 +675,18 @@ def main():
         if b["protocol"] == "modbus":
             m.write(f"Bath encoding    : {'float' if b['use_float'] else 'int'+str(b['decimals'])}\n")
         m.write(f"Plateaus (C)     : {b['plateaus']}\n")
-        m.write(f"Dwell (min)      : {b['minutes']}\n")
+        soak_lbl = "Min soak (min)   " if b["gate_mode"] == "drift" else "Dwell (min)      "
+        m.write(f"{soak_lbl}: {b['minutes']}\n")
         m.write(f"Ramps (C/min)    : {['max' if r is None else r for r in b['ramps']]}\n")
-        m.write(f"Stability        : tol={b['tol']} C, window={b['window_min']} min, "
+        m.write(f"Coarse settle    : tol={b['tol']} C, window={b['window_min']} min, "
                 f"timeout={b['timeout_per_10k']} min/10K (floor {b['timeout_floor']} min)\n")
+        m.write(f"Gate mode        : {b['gate_mode']}\n")
+        if b["gate_mode"] == "drift":
+            g = b["gate"]
+            m.write(f"Gate criteria    : |drift|<{g['drift_mk']:g} mK & sd<{g['sd_mk']:g} mK "
+                    f"over {g['window_min']:g} min on {g['channel'] or 'ref SPRT'}\n")
+            m.write(f"Gate soak        : min = plateau_minutes, cap = min + "
+                    f"{g['max_extra_min']:g} min, poll {g['poll_s']:g} s\n")
         m.write(f"Plateau file     : {plateau_file}\n")
     print("Meta file written:", meta_file)
 
@@ -596,7 +746,7 @@ def main():
             tag = f"Plateau {i}/{n_plateaus}"        # progress marker shown everywhere
             ramp_str = "max" if ramp is None else f"{ramp:g} C/min"
             say(f"\n===== {tag}: setpoint {sp:+.3f} C "
-                f"(dwell {minutes:g} min, ramp {ramp_str}) =====")
+                f"({soak_word} {minutes:g} min, ramp {ramp_str}) =====")
 
             # Timeout scales with how far the bath must travel from where it is
             # right now (30 min/10 K by default). If it still hasn't settled by
@@ -641,36 +791,71 @@ def main():
                 extra=status,
                 on_poll=on_poll,
             )
-            t_stable = datetime.now()
-            if ok:
-                say(f"  -> {tag} stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
-            else:
-                say(f"  !! {tag} NOT stable within {timeout:.0f} min. "
-                    f"Measuring anyway -- check this plateau afterwards.")
+            t_stable = datetime.now()          # bath PV reached the setpoint band (coarse)
 
-            t_dwell_start = datetime.now()
-            t_dwell_end   = t_dwell_start + timedelta(minutes=minutes)  # planned end
-            # Write the plateau row NOW, at the START of the measurement window, and
-            # flush -- so the window is on disk immediately and survives a Ctrl-C
-            # during a long dwell (t_dwell_end is the planned end = start + dwell;
-            # for a completed plateau it matches the actual end within milliseconds).
-            pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
-                     f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; {ok}\n")
-            pf.flush()
-
-            # During the dwell, show bath PV/SP, the SPRT temperature, and the raw
-            # NTC temperature per node for every configured NTC channel -- the full
-            # picture at the plateau.
-            if dash:
-                on_tick = lambda rem: render_dashboard(
-                    bath, dict(base, phase="DWELL", dwell_remaining=rem, stable_ok=ok))
-                interruptible_sleep(minutes * 60, f"{tag} dwell", on_tick=on_tick)
+            if b["gate_mode"] == "drift":
+                # --- dT/dt gate: soak until the SPRT reference stops moving ---
+                g = b["gate"]
+                min_soak, max_soak = minutes, minutes + g["max_extra_min"]
+                if ok:
+                    say(f"  -> {tag} at setpoint. Soaking until the SPRT is quiet "
+                        f"(min {min_soak:g} min, cap {max_soak:g} min).")
+                else:
+                    say(f"  !! {tag} bath not in band within {timeout:.0f} min; "
+                        f"soaking on the SPRT gate anyway.")
+                gate_pass, t_accept, gstats = gate_plateau(
+                    bath, microk_file, g["channel"], g,
+                    min_soak, max_soak, base, dash, say, tag)
+                # Accepted measurement window = the trailing gate window ending at accept.
+                t_dwell_end   = t_accept
+                t_dwell_start = t_accept - timedelta(minutes=g["window_min"])
+                if gate_pass:
+                    say(f"  -> {tag} gate passed after "
+                        f"{(t_accept - t_stable).total_seconds()/60:.0f} min. "
+                        f"Window = trailing {g['window_min']:g} min "
+                        f"[{t_dwell_start:%H:%M}..{t_dwell_end:%H:%M}].")
+                else:
+                    say(f"  !! {tag} soak cap hit without the gate passing -- window "
+                        f"recorded but flagged (check the reference drift).")
+                d_s = f"{gstats['drift_mk']:.2f}" if gstats else "NA"
+                s_s = f"{gstats['sd_mk']:.2f}"    if gstats else "NA"
+                n_s = gstats["n"] if gstats else 0
+                # Row written when the gate ACCEPTS (end of soak); extra QC columns.
+                pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
+                         f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; "
+                         f"{gate_pass}; {d_s}; {s_s}; {n_s}\n")
+                pf.flush()
+                say(f"  {tag} done.")
             else:
-                dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
-                                        f"{sprt_status(microk_file)} | "
-                                        f"{ntc_status(logger_file, ntc_channels)}")
-                interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
-            say(f"  {tag} done.")
+                # --- legacy fixed-time dwell ---
+                if ok:
+                    say(f"  -> {tag} stable at {sp:+.3f} C. Measuring for {minutes:g} min.")
+                else:
+                    say(f"  !! {tag} NOT stable within {timeout:.0f} min. "
+                        f"Measuring anyway -- check this plateau afterwards.")
+
+                t_dwell_start = datetime.now()
+                t_dwell_end   = t_dwell_start + timedelta(minutes=minutes)  # planned end
+                # Write the plateau row NOW, at the START of the measurement window, and
+                # flush -- so the window is on disk immediately and survives a Ctrl-C
+                # during a long dwell (t_dwell_end is the planned end = start + dwell;
+                # for a completed plateau it matches the actual end within milliseconds).
+                pf.write(f"{i}; {sp}; {'off' if ramp is None else ramp}; "
+                         f"{t_command}; {t_stable}; {t_dwell_start}; {t_dwell_end}; {ok}\n")
+                pf.flush()
+
+                # During the dwell, show bath PV/SP, the SPRT temperature, and the raw
+                # NTC temperature per node for every configured NTC channel.
+                if dash:
+                    on_tick = lambda rem: render_dashboard(
+                        bath, dict(base, phase="DWELL", dwell_remaining=rem, stable_ok=ok))
+                    interruptible_sleep(minutes * 60, f"{tag} dwell", on_tick=on_tick)
+                else:
+                    dwell_status = lambda: (f"bath PV={bath.read_pv():+.3f} SP={sp:+.3f} | "
+                                            f"{sprt_status(microk_file)} | "
+                                            f"{ntc_status(logger_file, ntc_channels)}")
+                    interruptible_sleep(minutes * 60, f"{tag} dwell", extra=dwell_status)
+                say(f"  {tag} done.")
 
         if dash:
             sys.stdout.write("\033[H\033[J")     # leave a clean screen

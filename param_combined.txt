@@ -49,7 +49,8 @@ bath_encoding: int1
 # Plateaus in deg C, in run order (1..100 values)
 plateaus:        -40; -20; 0; 20; 40
 
-# Dwell / measurement time in minutes, counted AFTER the bath is stable.
+# In drift mode (default) this is the MINIMUM soak per plateau before the SPRT
+# gate may accept; in fixed mode it is the exact dwell after the bath is stable.
 # One value -> applies to all plateaus.  Or one value per plateau.
 plateau_minutes: 30
 
@@ -58,11 +59,28 @@ plateau_minutes: 30
 # 1 -> ~1 C). Empty -> max speed. One value -> all plateaus, or one per plateau.
 ramp_c_per_min: 1
 
-# Arrival / stability detection. The bath PV fluctuates ~+/-0.03 C short-term, so
-# 0.05 lets it settle cleanly (real stability is judged later from the SPRT log).
+# --- Coarse arrival detection (bath PV) ---
+# Gets the bath into the setpoint band before the real (SPRT) gate takes over.
+# The bath PV fluctuates ~+/-0.03 C and only reads to 0.01 C, so this is coarse.
 stability_tol:              0.05   # deg C band around the setpoint
-stability_window:          10      # minutes PV must stay in band before measuring
-# Max wait for stability SCALES with the step: minutes per 10 K of travel. If it
-# is still not stable at the timeout, the run measures anyway and moves on.
+stability_window:          10      # minutes PV must stay in band before soaking
+# Max wait for arrival SCALES with the step: minutes per 10 K of travel. If the
+# bath is still not in band at the timeout, we soak on the SPRT gate anyway.
 stability_timeout_per_10k: 30      # minutes per 10 K
 stability_timeout_min:     15      # floor (minutes) for small/zero steps
+
+# --- Plateau gate: when is the plateau actually "done"? ---
+# drift (default) = end each plateau when the SPRT REFERENCE stops moving, not on
+#                   a fixed clock. Slow creep (a few mK / 30 min) is harmless; a
+#                   live dT/dt is not. Gated on the MicroK SPRT (sub-mK), because
+#                   the bath PV (10 mK) cannot see a 3 mK drift.
+# fixed          = legacy behaviour: dwell exactly plateau_minutes.
+gate_mode:        drift
+gate_drift_mk:    3     # accept when |drift over the window| < this (mK)
+gate_sd_mk:       8     # AND the scatter about the fit line < this (mK)
+gate_window_min:  30    # trailing window used for drift+sd AND for the average
+gate_poll_s:      30    # how often the gate re-checks the SPRT log
+# Hard cap per plateau = its min soak (plateau_minutes) + this, so a plateau whose
+# reference never settles still ends (and is flagged), instead of blocking forever.
+gate_max_extra_min: 120
+# gate_channel:   Channel2   # which SPRT to gate on; default = first SPRT channel

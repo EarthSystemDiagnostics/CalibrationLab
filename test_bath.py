@@ -155,6 +155,7 @@ def configure(**kw):
 import bath                         # noqa: E402
 import sprt                         # noqa: E402
 import ntc                          # noqa: E402
+import gate                         # noqa: E402
 import calibration_auto as ca       # noqa: E402
 
 
@@ -470,6 +471,124 @@ def test_run_schedule_end_to_end():
     bath.run_schedule(b, [-40.0, 10.0], minutes=0.002, ramp=None,
                       tol=0.05, window_min=0.001, timeout_min=0.5)
     assert abs(b.read_pv() - 10.0) < 0.1               # ended near last setpoint
+
+
+# --------------------------------------------------------------------------
+# dT/dt plateau gating (gate.py + calibration_auto drift mode)
+# --------------------------------------------------------------------------
+# Glass-SPRT slope, to synthesize a ratio for a wanted temperature offset from 0 C.
+_W0_GLAS = 0.254210687                                   # glass ratio at +0.01 C
+_M_GLAS  = ((0.01 + 273.15) - (-38.8344 + 273.15)) / (0.254210687 - 0.214602392)
+
+
+def _microk(t_min, temp_c, ch=2, n=0):
+    """One MicroK log line whose ratio decodes (via sprt) to ~temp_c on Channel<ch>."""
+    w = _W0_GLAS + temp_c / _M_GLAS
+    return f"{t_min};2026-07-02 00:00:00;{w:.9f};0.56mA;Channel{ch};{n}"
+
+
+def _series(fn, n=40):
+    return "\n".join(_microk(t, fn(t), n=t) for t in range(n))
+
+
+def test_gate_flat_passes():
+    st = gate.window_stats(gate.parse_sprt_samples(_series(lambda t: 0.001)), 30)
+    assert st["span_min"] == 30.0 and st["drift_mk"] < 1 and st["sd_mk"] < 2
+    assert gate.gate_ok(st, 30, 3, 8) is True
+
+
+def test_gate_drift_fails():
+    # +20 mK over a 30-min window -> drift gate trips even though scatter is ~0.
+    st = gate.window_stats(gate.parse_sprt_samples(_series(lambda t: 0.020 * t / 30.0)), 30)
+    assert st["drift_mk"] > 15 and st["sd_mk"] < 1
+    assert gate.gate_ok(st, 30, 3, 8) is False
+
+
+def test_gate_noise_fails():
+    # Flat mean but +-15 mK scatter -> sd gate trips even though drift is ~0.
+    st = gate.window_stats(gate.parse_sprt_samples(
+        _series(lambda t: 0.015 * (1 if t % 2 else -1))), 30)
+    assert st["drift_mk"] < 1 and st["sd_mk"] > 10
+    assert gate.gate_ok(st, 30, 3, 8) is False
+
+
+def test_gate_insufficient_data_is_none_and_not_ok():
+    two = _microk(0, 0.0) + "\n" + _microk(1, 0.0)      # < 3 points
+    assert gate.window_stats(gate.parse_sprt_samples(two), 30) is None
+    assert gate.gate_ok(None, 30, 3, 8) is False
+
+
+def test_gate_coverage_guard():
+    # Only ~5 min of (flat) data: drift/sd fine, but the window isn't full yet.
+    st = gate.window_stats(gate.parse_sprt_samples(_series(lambda t: 0.0, n=6)), 30)
+    assert st["span_min"] == 5.0
+    assert gate.gate_ok(st, 30, 3, 8) is False           # coverage 5/30 < 0.9
+
+
+def test_gate_channel_filter_single_channel():
+    # Mixed Channel2/Channel3 -> only the requested channel is kept.
+    mix = _microk(0, 0.0, ch=2) + "\n" + _microk(0, 5.0, ch=3) + "\n" + _microk(1, 0.0, ch=2)
+    assert len(gate.parse_sprt_samples(mix, channel="Channel2")) == 2
+    assert len(gate.parse_sprt_samples(mix, channel="3")) == 1
+    assert len(gate.parse_sprt_samples(mix)) == 2         # None -> last-seen (ch2)
+
+
+def test_sprt_window_stats_from_file(tmp="/tmp/_test_gate_microk.txt"):
+    open(tmp, "w").write(_series(lambda t: 0.001))
+    st = ca.sprt_window_stats(tmp, "Channel2", 30)
+    assert st and st["drift_mk"] < 1 and st["sd_mk"] < 2
+    assert ca.sprt_window_stats("/tmp/_missing_gate_xyz.txt", "Channel2", 30) is None
+
+
+def test_config_parser_gate_drift_defaults(tmp="/tmp/_test_param_gate.txt"):
+    open(tmp, "w").write("plateaus: 0; -20\nplateau_minutes: 30; 180\n")
+    b = ca.read_bath_config(tmp)
+    assert b["gate_mode"] == "drift"                      # new default
+    g = b["gate"]
+    assert (g["drift_mk"], g["sd_mk"], g["window_min"]) == (3.0, 8.0, 30.0)
+    assert g["max_extra_min"] == 120.0 and g["poll_s"] == 30.0
+    assert b["minutes"] == [30.0, 180.0]                  # per-plateau min soak
+
+
+def test_config_parser_gate_overrides_and_fixed(tmp="/tmp/_test_param_gate2.txt"):
+    open(tmp, "w").write(
+        "plateaus: 0\nplateau_minutes: 20\n"
+        "gate_mode: fixed\ngate_drift_mk: 2\ngate_sd_mk: 5\n"
+        "gate_window_min: 25\ngate_max_extra_min: 90\ngate_channel: Channel3\n")
+    b = ca.read_bath_config(tmp)
+    assert b["gate_mode"] == "fixed"
+    g = b["gate"]
+    assert (g["drift_mk"], g["sd_mk"], g["window_min"]) == (2.0, 5.0, 25.0)
+    assert g["max_extra_min"] == 90.0 and g["channel"] == "Channel3"
+
+
+def test_config_parser_gate_mode_validated(tmp="/tmp/_test_param_gate3.txt"):
+    open(tmp, "w").write("plateaus: 0\nplateau_minutes: 5\ngate_mode: bogus\n")
+    try:
+        ca.read_bath_config(tmp)
+        assert False, "bogus gate_mode should raise SystemExit"
+    except SystemExit:
+        pass
+
+
+def test_estimate_drift_uses_typical_and_cap():
+    b = {"gate_mode": "drift", "plateaus": [-20.0], "minutes": [180.0], "ramps": [None],
+         "window_min": 10.0, "timeout_per_10k": 30.0, "timeout_floor": 15.0,
+         "gate": {"typical_min": 70.0, "max_extra_min": 120.0}}
+    rows = ca.estimate_schedule(b, 0.0)                   # step 0 -> -20 C
+    r = rows[0]
+    # probable measure = max(min_soak=180, typical=70) = 180; worst = 180 + 120 = 300
+    assert r["dwell"] == 180.0 and r["safe_dwell"] == 300.0
+    assert r["probable"] > 180.0 and r["safe"] == r["timeout"] + 300.0
+
+
+def test_estimate_drift_typical_floors_short_soak():
+    b = {"gate_mode": "drift", "plateaus": [0.0], "minutes": [20.0], "ramps": [None],
+         "window_min": 10.0, "timeout_per_10k": 30.0, "timeout_floor": 15.0,
+         "gate": {"typical_min": 70.0, "max_extra_min": 120.0}}
+    r = ca.estimate_schedule(b, 0.0)[0]
+    assert r["dwell"] == 70.0                             # short min soak floored to median
+    assert r["safe_dwell"] == 140.0                       # 20 + 120
 
 
 # --------------------------------------------------------------------------
