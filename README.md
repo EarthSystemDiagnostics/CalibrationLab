@@ -14,9 +14,10 @@ Two ways to run:
 - **`calibration_log.py`** — *legacy / passive*. Logs both instruments; the bath
   temperature is set **manually**. Unchanged.
 - **`calibration_auto.py`** — *automated*. Additionally drives the **Isotech Libra
-  785** bath through a list of temperature plateaus (via `bath.py`, Modbus over
-  RS232) while logging continuously, and shows the live **SPRT temperature** next
-  to the bath setpoint/PV so you can see at a glance where things stand.
+  785** bath through a list of temperature plateaus (via `bisynch.py`, EI-Bisynch
+  over RS232) while logging continuously, ends each plateau when the SPRT reference
+  stops drifting, and shows the live **SPRT temperature** next to the bath
+  setpoint/PV so you can see at a glance where things stand.
 
 ---
 
@@ -208,9 +209,10 @@ python3 calibration_auto.py --dashboard          # fixed in-place overview panel
 ```
 
 `--dashboard` replaces the scrolling log with a single panel that refreshes in
-place — plateau progress `i/N`, phase (settle/dwell), bath PV/SP/OUT/ramp, the
-SPRT temperature and a live NTC table for **all** nodes (every group merged). The
-loggers still write their files exactly as before; only the console view changes.
+place — plateau progress `i/N`, phase (settle/**gate**/dwell), bath PV/SP/OUT/ramp,
+the SPRT temperature, the live drift/sd gate metrics, and a live NTC table for
+**all** nodes (every group merged). The loggers still write their files exactly as
+before; only the console view changes.
 
 ### Quick bath-only usage — `bath.py` (no logging)
 
@@ -235,12 +237,27 @@ encoding or baud/parity (in `bath.py`) is off — see the header notes.
 > `bisynch.py` for one-off commands, or `calibration_auto.py` with
 > `bath_protocol: bisynch` (default) for a full run.
 
-**Per plateau (`calibration_auto.py`):** (optional ramp →) set setpoint → wait until the bath is stable
-(PV inside `stability_tol` for `stability_window` minutes) → measure for
-`plateau_minutes` → next. A fourth output file
-`<experiment>_<time>_plateaus.txt` records each plateau's setpoint and timestamps
-(commanded / stable / measurement start+end) so the stable window can be sliced
-out afterwards. The live status line shows bath PV/SP, the **SPRT temperature**
+**Per plateau (`calibration_auto.py`):** (optional ramp →) set setpoint → coarse
+settle (bath PV inside `stability_tol` for `stability_window` minutes) → **soak
+until the plateau gate accepts** → next. A fourth output file
+`<experiment>_<time>_plateaus.txt` records each plateau's setpoint, timestamps and
+gate metrics so the measurement window can be sliced out afterwards.
+
+**The plateau gate (`gate_mode`).** A plateau is "done" not on a fixed clock but
+when the **SPRT reference stops moving** (`gate_mode: drift`, the default): accept
+the window once, over the trailing `gate_window_min` minutes, the fitted drift is
+`< gate_drift_mk` **and** the scatter is `< gate_sd_mk`. Slow creep (a few mK over
+half an hour) does no harm to the fit; a live dT/dt does — and the bath's own PV
+(10 mK resolution) cannot even see a 3 mK drift, so the gate reads the MicroK SPRT
+(sub-mK). `plateau_minutes` becomes the **minimum soak** before the gate may
+accept (long for the cold end, which creeps for hours); a hard cap
+(`plateau_minutes + gate_max_extra_min`) ends and **flags** any plateau whose
+reference never settles. `gate_mode: fixed` keeps the old fixed-time dwell. The
+accepted `[t_dwell_start, t_dwell_end]` in the plateau file **is** the trailing
+average window; the plateau-file header lists the exact columns (drift mode adds
+`gate_ok; drift_mK; sd_mK; n`).
+
+The live status line shows bath PV/SP, the **SPRT temperature**
 (via `sprt.py`) **and** the **raw NTC temperature per node for each NTC channel**
 (NTC1/NTC2/TestSB, via `ntc.py`) so you
 see the whole picture at a plateau. Both conversions are **display only** — SPRT:
@@ -267,20 +284,40 @@ USB-serial adapter is re-plugged); **(2) experiment**; **(3) bath controller**;
 | `bath_address`      | Bisynch GID/UID address (the 3504 = `1`) / Modbus slave address  |
 | `bath_encoding`     | **Modbus only:** `float`\|`int1`\|`int2`\|`int3` register scaling |
 | `plateaus`          | 1–100 setpoints in °C, in run order (`;`-separated)             |
-| `plateau_minutes`   | Dwell after stability; one value → all, or one per plateau       |
+| `plateau_minutes`   | drift mode: **min soak** before the gate; fixed mode: exact dwell. one → all, or per plateau |
 | `ramp_c_per_min`    | Approach ramp; empty → max speed; one → all, or per plateau      |
-| `stability_tol`             | °C band around the setpoint counting as "arrived"        |
-| `stability_window`          | minutes PV must stay in band before measuring            |
-| `stability_timeout_per_10k` | max wait scales with step: minutes per 10 K of travel    |
+| `stability_tol`             | °C band around the setpoint counting as "arrived" (coarse)|
+| `stability_window`          | minutes PV must stay in band before soaking              |
+| `stability_timeout_per_10k` | max wait for arrival scales with step: minutes per 10 K  |
 | `stability_timeout_min`     | floor (minutes) for small/zero steps                     |
+| `gate_mode`         | `drift` (SPRT dT/dt gate, default) \| `fixed` (fixed-time dwell)  |
+| `gate_drift_mk`     | accept when \|drift over the window\| < this (mK), default 3      |
+| `gate_sd_mk`        | AND scatter about the fit line < this (mK), default 8            |
+| `gate_window_min`   | trailing window for drift+sd **and** the average (min), default 30 |
+| `gate_max_extra_min`| soak cap = `plateau_minutes` + this (min), default 120           |
+| `gate_poll_s`       | how often the gate re-checks the SPRT log (s), default 30        |
+| `gate_channel`      | SPRT channel to gate on; default = first configured SPRT channel |
 
-If a plateau is still not stable when its (step-scaled) timeout elapses, the run
-**measures anyway** and moves on — it never blocks the whole schedule.
+If the coarse settle times out (step-scaled), the run **soaks on the SPRT gate
+anyway**; if the gate never passes within the soak cap, it measures the trailing
+window and **flags** the plateau. It never blocks the whole schedule.
+
+A ready-to-run **24 h schedule** is provided as **`param_24h.txt`** — an 11-point
+down-sweep with brackets (+5 … −35 in ~4 °C steps, 180 min soak at −35) plus 4
+up-anchors (−25, −15, −5, +3) that re-visit interior temperatures later in time.
+The up-anchors make time orthogonal to temperature (common-mode drift is
+~+1.5 mK/day), which keeps the fitted coefficients from bending:
+
+```bash
+python3 calibration_auto.py --param param_24h.txt --dashboard
+```
 
 **Time estimate.** At start (and, in `--dashboard`, continuously) the run prints a
 **probable** finish time and a **latest** finish time. "Latest" is a hard upper
-bound = Σ(stability timeout + dwell) per plateau, since a plateau always measures
-at its timeout; "probable" assumes each plateau settles in ramp + window time.
+bound = Σ(arrival timeout + worst-case measure) per plateau — in drift mode the
+worst-case measure is the soak cap (`plateau_minutes + gate_max_extra_min`), so a
+plateau always ends; "probable" assumes each settles in ramp + a typical soak
+(≈ the empirical median).
 
 ### "No communication with the instrument"
 
@@ -321,10 +358,22 @@ mnemonics so you can match them against the 3504 front panel before writing.
 | `calibration_auto.py` | Automated logger + bath plateau control             |
 | `bath.py`             | Modbus RTU read-out (over-temp limiter; Series-2000 units) |
 | `bisynch.py`          | EI-Bisynch control of the Eurotherm 3504 (the bath driver) |
+| `gate.py`             | SPRT dT/dt plateau gate (trailing drift/sd stats)   |
 | `sprt.py`             | SPRT ratio → temperature (live display)             |
 | `ntc.py`              | NTC raw counts → temperature (live display)         |
-| `test_bath.py`        | Offline test suite (in-process fake slave)          |
+| `test_bath.py`        | Offline test suite (fake slave, gate, config)       |
+| `test_bisynch.py`     | Offline EI-Bisynch protocol test suite              |
 | `tools/bath_sim.py`   | Modbus-RTU bath simulator (serial-level testing)    |
 | `param_combined.txt`  | Configuration (logging + bath automation)           |
+| `param_24h.txt`       | Ready-to-run 24 h down-sweep + up-anchor schedule   |
+| `DATA_FORMATS.md`     | Output file formats (for the R calibration pipeline)|
 | `requirements.txt`    | Python dependencies                                 |
 | `TODO.md`             | Known limitations / future work                     |
+
+---
+
+## Authors
+
+- **Nora Hirsch** and **Kathrin Brocker** — original SPRT/NTC logging code.
+- **Thomas Laepple** — bath automation, calibration workflow, maintenance
+  (with Claude Code).
