@@ -177,6 +177,24 @@ Group1; SecondsElapsed; DateTimePC; …          ← header repeats each cycle
   reduce to one clean wide table. (Multi-group column-name handling is a known
   limitation — see `TODO.md`.)
 
+**Per-value timestamps (`TOFFMS`).** The head measures its sensors **sequentially**
+(number, `|`, next number, …), so a many-node line takes tens of seconds to over a
+minute to stream — and the bath oscillates ~10 mK on a ~2 min limit cycle. Tagging
+all values of a line with one timestamp would alias that oscillation into several
+mK of per-sensor error. The logger therefore reads the head **byte-by-byte** and
+records each value's true arrival time, appending a 5th `;`-field to each data row:
+
+```
+Group1; 18.33; 2026-07-06 19:09:44.623; 861775 | … || … ; TOFFMS=0|763|1526|2290|…
+```
+
+`TOFFMS` holds one integer per value: milliseconds from the **first** value (whose
+time is the row's `DateTimePC`), in left-to-right order. So value *k*'s absolute
+time is `DateTimePC + TOFFMS[k] ms`. Old 4-field readers ignore the field (the
+`counts` block is unchanged); the R pipeline uses it to pair each count with the
+SPRT **interpolated to that exact instant**, so the common-mode bath oscillation
+cancels instead of aliasing (see `DATA_FORMATS.md`).
+
 ---
 
 ## Automated bath-driven runs — `calibration_auto.py`

@@ -389,7 +389,9 @@ def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
             return None
 
         dparts = lines[data_idx].split(";", 3)
-        dgroup, dblock = dparts[0].strip(), dparts[3]
+        # dparts[3] may carry a trailing "; TOFFMS=..." per-value-timing field
+        # (new token-accurate logger); the counts are everything before it.
+        dgroup, dblock = dparts[0].strip(), dparts[3].split(";", 1)[0]
         header = None
         for i in range(data_idx, -1, -1):            # nearest preceding header, same group
             hp = lines[i].split(";", 3)
@@ -436,7 +438,8 @@ def latest_ntc_temps_by_group(ntc_file, channels=ntc.NTC_CHANNELS):
 
         out = []
         for grp, didx in latest.items():
-            dblock = lines[didx].split(";", 3)[3]
+            # strip any trailing "; TOFFMS=..." per-value-timing field (new logger)
+            dblock = lines[didx].split(";", 3)[3].split(";", 1)[0]
             header = None
             for i in range(didx, -1, -1):
                 hp = lines[i].split(";", 3)

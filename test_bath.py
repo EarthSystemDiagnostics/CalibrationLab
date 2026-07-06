@@ -24,6 +24,7 @@ plateau schedule -- can be exercised end to end.
 import sys
 import types
 import time
+import threading
 
 
 # --------------------------------------------------------------------------
@@ -589,6 +590,56 @@ def test_estimate_drift_typical_floors_short_soak():
     r = ca.estimate_schedule(b, 0.0)[0]
     assert r["dwell"] == 70.0                             # short min soak floored to median
     assert r["safe_dwell"] == 140.0                       # 20 + 120
+
+
+# --------------------------------------------------------------------------
+# Token-accurate NTC logging (per-value timestamps)
+# --------------------------------------------------------------------------
+class _FakeSer:
+    """Feeds a byte buffer one byte at a time; b'' once exhausted (like a timeout)."""
+    def __init__(self, data): self._d = bytes(data); self.i = 0
+    def read(self, n=1):
+        if self.i >= len(self._d): return b""
+        ch = self._d[self.i:self.i + 1]; self.i += 1; return ch
+
+
+def test_read_tokenized_line_counts_values():
+    import calibration_log as cl
+    ev = threading.Event()
+    text, times = cl.read_tokenized_line(_FakeSer(b"864418 | 859990 || 861084 \n"), ev)
+    assert text == "864418 | 859990 || 861084"           # same content readline() gives
+    assert len(times) == 3                                # 3 values; '||' counted once
+    assert all(times[k] <= times[k + 1] for k in range(len(times) - 1))  # monotonic
+
+
+def test_read_tokenized_line_meta_and_empty():
+    import calibration_log as cl
+    ev = threading.Event()
+    # a 'New Node Array' meta line is one token -> one stamp (worker filters it by text)
+    text, times = cl.read_tokenized_line(_FakeSer(b"New Node Array: 88 89\n"), ev)
+    assert text == "New Node Array: 88 89" and len(times) == 1
+    # nothing to read -> (None, [])
+    assert cl.read_tokenized_line(_FakeSer(b""), threading.Event(), idle_timeout=0) == (None, [])
+
+
+def test_latest_ntc_temps_ignores_toffms(tmp="/tmp/_test_ntc_toffms.txt"):
+    # New 5-field row: the trailing '; TOFFMS=...' must not corrupt the last value.
+    open(tmp, "w").write(
+        "Group1; SecondsElapsed; DateTimePC; N90_NTC1 | N90_NTC2 | N90_TestSB\n"
+        "Group1; 9.19; 2026-07-02 16:00:09.1; 5812827 | 5540969 | 4952001; TOFFMS=0|763|1526\n")
+    d = _chan(ca.latest_ntc_temps(tmp))
+    assert abs(d["N90"]["NTC1"] - (-51.021)) < 0.01
+    assert abs(d["N90"]["TestSB"] - (-45.652)) < 0.01     # last value clean, not '4952001; TOFFMS=0'
+
+
+def test_latest_ntc_by_group_ignores_toffms(tmp="/tmp/_test_ntc_toffms_g.txt"):
+    open(tmp, "w").write(
+        "Group1; SecondsElapsed; DateTimePC; N90_NTC1 || N91_NTC1\n"
+        "Group1; 1.0; 2026-07-02 16:00:01.0; 5812827 || 4540193; TOFFMS=0|1200\n")
+    rows = ca.latest_ntc_temps_by_group(tmp, channels=("NTC1",))
+    d = _chan(rows)
+    assert abs(d["N90"]["NTC1"] - (-51.021)) < 0.01
+    assert abs(d["N91"]["NTC1"] - (-42.968)) < 0.01       # last node clean despite TOFFMS
 
 
 # --------------------------------------------------------------------------

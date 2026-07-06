@@ -154,6 +154,58 @@ def microk_worker(stop_event, c, microk_port, microk_file, quiet=False):
         print("[MicroK] stopped, port closed.")
 
 
+def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
+    """Read one newline-terminated head line, timestamping each '|'-separated value.
+
+    The temperature head measures its sensors SEQUENTIALLY -- number, '|', next
+    number, '|', ... -- so with many nodes a single line takes tens of seconds to
+    over a minute, and each value arrives at its own time. A plain readline() tags
+    them all with one (end-of-line) time; on a bath that oscillates ~10 mK / 2 min
+    that single stamp aliases into several mK of per-sensor error. Here we read
+    byte-by-byte and capture datetime.now() at the first '|' after each value (and
+    at the newline for the last one), giving the true per-value arrival time.
+
+    Returns (text, value_times):
+        text         the line without CR/LF, same content readline().strip() gives
+                     ("v | v || v ..."); None if stopped/idle with nothing received.
+        value_times  datetime per value, left-to-right, aligned with splitting the
+                     data block on runs of '|' (re.split(r"\\|+", text)). Runs of
+                     '|' (the '||' node separators) count once, so len(value_times)
+                     == number of numeric values == nodes x channels.
+    Stops early if `stop_event` is set or the head goes silent for `idle_timeout`
+    seconds (a stall), returning whatever was collected.
+    """
+    buf, token, value_times = bytearray(), bytearray(), []
+    prev_pipe = False
+    last = time.time()
+    while not stop_event.is_set():
+        ch = ser.read(1)
+        if not ch:                              # serial timeout: no byte this tick
+            if time.time() - last > idle_timeout:
+                break
+            continue
+        last = time.time()
+        if ch == b"\n":
+            if token.strip():                   # last value ends at the newline
+                value_times.append(datetime.now())
+            break
+        if ch == b"\r":
+            continue
+        buf += ch
+        if ch == b"|":
+            if not prev_pipe and token.strip():  # value completed before this '|'
+                value_times.append(datetime.now())
+            prev_pipe = True
+            token = bytearray()
+        else:
+            prev_pipe = False
+            token += ch
+    text = buf.decode("utf-8", "replace").strip()
+    if not text and not value_times:
+        return None, []
+    return text, value_times
+
+
 def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
     try:
         ser = serial.Serial(logger_port, 19200, serial.EIGHTBITS,
@@ -196,19 +248,28 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
                     r = False
                     i = 0
                     while i < (Nr_MeasPoints + 3) and not stop_event.is_set():
-                        received = ""
-                        while not received and not stop_event.is_set():
-                            received = ser.readline().decode("utf-8", "replace")
-                        if not received:
+                        data_values, value_times = read_tokenized_line(ser, stop_event)
+                        if not data_values:
                             continue
-                        data_values = received.strip()
-                        now = datetime.now()
+                        # Row time = the FIRST value's arrival (not end-of-line); the
+                        # per-value offsets below are measured from it.
+                        now = value_times[0] if value_times else datetime.now()
                         sec = (now - start).total_seconds()
-                        if "New Node Array:" in received:      # new node group confirmed
+                        if "New Node Array:" in data_values:   # new node group confirmed
                             r = True
                             fh.write(f"Group{g_idx+1}; {headers[g_idx]}\r\n")
                         if r:
-                            fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
+                            if value_times:
+                                # ms offset of each value from the first (token-accurate:
+                                # the head measures sensors sequentially, so a 150-value
+                                # line spans ~2 min -- one stamp would alias the bath
+                                # oscillation into per-sensor error). Appended as a 5th
+                                # ';' field so old 4-field readers keep working.
+                                offs = "|".join(str(int(round((t - now).total_seconds() * 1000)))
+                                                for t in value_times)
+                                fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}; TOFFMS={offs}\n")
+                            else:
+                                fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                             fh.flush()
                             i += 1
                             # On-screen only: raw NTC temperature per node for every
