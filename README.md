@@ -393,5 +393,5 @@ mnemonics so you can match them against the 3504 front panel before writing.
 ## Authors
 
 - **Nora Hirsch** and **Kathrin Brocker** — original SPRT/NTC logging code.
-- **Thomas Laepple** — bath automation, calibration workflow, maintenance
-  (with Claude Code).
+- **The calibration team**, with **Claude Code** — bath automation, plateau
+  drift-gating, token-accurate logging, and the calibration workflow.
