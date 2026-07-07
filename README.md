@@ -105,7 +105,7 @@ microk_channels: 1;2                     # Reference ; SPRT1 [ ; SPRT2 ]
 microk_port: usbserial-A922BJHF          # optional port pre-selection
 
 ntc_readout: NTC1;NTC2;TestSB            # from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE
-ntc_groups: 5;60                         # sensors per group ; measurement points per group
+ntc_groups: 5;60                         # legacy field, no longer chunks nodes (see below)
 ntc_nodes: 90;91;92;93;94                # sensor node IDs
 ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 ```
@@ -116,7 +116,7 @@ ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 | `microk_channels` | Bridge channels: `Reference; SPRT1` (add `;SPRT2` for two SPRTs) |
 | `microk_port`     | Optional MicroK port hint (pre-selection only)                 |
 | `ntc_readout`     | Which sensor channels to log                                   |
-| `ntc_groups`      | `sensors_per_group ; measurement_points_per_group`             |
+| `ntc_groups`      | Legacy — parsed for the meta file only; nodes are no longer chunked |
 | `ntc_nodes`       | Sensor node IDs                                                |
 | `ntc_port`        | Optional Temperature-head port hint (pre-selection only)       |
 
@@ -134,48 +134,42 @@ All three share the same timestamp, so one run = one matching set. The `_meta.tx
 records the actually-chosen ports and all parameters, so the measurement settings
 are always recoverable later.
 
-### How the NTC group readout works
+### How the NTC readout works
 
 The SchwaRTech/AWI temperature head is a **multiplexed** system: each physical
-sensor module is a **node** (`ntc_nodes`, e.g. `90;91;92;93;94`). You cannot read
-all nodes freely at once — you tell the head which nodes form the current **node
-array** with a `NODES 90 91 92 …` command, and it then streams reading lines for
-exactly those nodes. **One group = one node array read in one burst.**
+sensor module is a **node** (`ntc_nodes`, e.g. `90;91;92;93;94`). You tell the
+head which nodes to read with a single `NODES 90 91 92 …` command; it then streams
+one reading line per sweep containing exactly those nodes, and it **keeps that node
+array in its own memory** — across sweeps and even across restarts.
 
-`ntc_groups` controls this as `sensors_per_group ; measurement_points_per_group`:
+Because of that, the logger reads **every node as one continuous array**: it issues
+`NODES` **once** at startup and then just streams and logs, never re-issuing the
+command. (Earlier versions chunked the nodes into groups and round-robined between
+them, re-issuing `NODES` for each — but every command restarts the head, so with a
+short array that produced nothing but repeated header lines. Reading all nodes as
+one array removes the problem entirely.)
 
-- **`sensors_per_group`** — how many nodes go into each group. The flat
-  `ntc_nodes` list is chunked into blocks of this size. With `5` and five nodes
-  you get **one** group `[90,91,92,93,94]`; with ten nodes you get **two**
-  (`[90-94]`, `[95-99]`).
-- **`measurement_points_per_group`** — how many reading lines are collected for a
-  group before switching to the next (a few extra lines are read to absorb the
-  echo/confirmation the head emits when the node array changes).
+`ntc_readout` picks which channels each node outputs (`NTC1`, `NTC2`, `TestSB`, …);
+`DateTime`/`TempADC` are per-line, the rest are per-node. `ntc_groups` is a **legacy
+field**: it is still parsed (and echoed into the meta file) but no longer chunks the
+nodes — all nodes always go into the one array.
 
-`ntc_readout` picks which channels each node outputs (`NTC1`, `NTC2`, `TestSB`,
-…); `DateTime`/`TempADC` are per-line, the rest are per-node.
-
-**In the `_ntc.txt` file** the readout is written as tagged blocks, not one wide
-table. Each cycle writes a `Group<n>;` header followed by ~`measurement_points`
-data rows, then moves to the next group (and later loops back):
+**In the `_ntc.txt` file** the header is written **once** at the start, followed by
+a continuous stream of data rows (all tagged `Group1;` for backward compatibility):
 
 ```
 Group1; SecondsElapsed; DateTimePC; N94_NTC1 | N94_NTC2 | N94_TestSB || N96_NTC1 | N96_NTC2 | N96_TestSB
-Group1; 9.19; 2026-07-02 15:59:58.58; 5812827 | 5732217 | 5648185 || 5540969 | 5471459 | 5400559
+Group1; 9.19;  2026-07-02 15:59:58.58; 5812827 | 5732217 | 5648185 || 5540969 | 5471459 | 5400559
 Group1; 13.77; 2026-07-02 16:00:03.15; 5310211 | 5253038 | 5192965 || 5113788 | 5066173 | 5013578
 …
-Group1; SecondsElapsed; DateTimePC; …          ← header repeats each cycle
 ```
 
 - Within a data row, `|` separates channels **within** a node and `||` separates
-  **nodes**. Every row of a group fills all that group's node columns — no blanks.
-- With **multiple groups**, `Group1` blocks and `Group2` blocks alternate; a node
-  that is not in the current group simply does not appear in that block (it shows
-  up in its own group's block). The `Group<n>;` tag exists to separate them again.
-- The header line is rewritten every cycle; on read-in, repeated headers and the
-  `New Node Array:` / echo lines are filtered out. Single-group runs therefore
-  reduce to one clean wide table. (Multi-group column-name handling is a known
-  limitation — see `TODO.md`.)
+  **nodes**. Every row fills all node columns — no blanks.
+- The header appears only once (not per cycle), so on a long run it scrolls out of a
+  tail-read window; readers fall back to the known column layout from the config.
+  `New Node Array:` / echo lines are recognised structurally and filtered out.
+- One array = one clean wide table, directly usable.
 
 **Per-value timestamps (`TOFFMS`).** The head measures its sensors **sequentially**
 (number, `|`, next number, …), so a many-node line takes tens of seconds to over a
@@ -229,8 +223,8 @@ python3 calibration_auto.py --dashboard          # fixed in-place overview panel
 `--dashboard` replaces the scrolling log with a single panel that refreshes in
 place — plateau progress `i/N`, phase (settle/**gate**/dwell), bath PV/SP/OUT/ramp,
 the SPRT temperature, the live drift/sd gate metrics, and a live NTC table for
-**all** nodes (every group merged). The loggers still write their files exactly as
-before; only the console view changes.
+**all** nodes. The loggers still write their files exactly as before; only the
+console view changes.
 
 ### Quick bath-only usage — `bath.py` (no logging)
 
