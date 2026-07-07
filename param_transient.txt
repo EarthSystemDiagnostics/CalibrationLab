@@ -1,0 +1,42 @@
+# ============================================================
+#  Transient sweep  -  drive the bath up/down (no dwell) to characterise the
+#  bath + sensor dynamic response and validate token-accurate per-value logging.
+#  Run with:  python3 calibration_auto.py --param param_transient.txt --dashboard
+#
+#  How it works: gate_mode=fixed + plateau_minutes=0 + a tiny stability window ->
+#  the run ramps to each setpoint, counts it as "arrived" and reverses at once, so
+#  the setpoints become the APEXES of a triangle wave (no plateau). The continuous
+#  NTC+SPRT+TOFFMS stream is the dataset; plateaus.txt just marks the apex times.
+#
+#  Two ramp rates (1 then 2 C/min) over the same range: the up-vs-down hysteresis
+#  scales as 2*dTau*rate, so extrapolating rate->0 gives the lag-free calibration
+#  and reveals how flat a real plateau must be.
+# ============================================================
+
+# --- hardware (edit to the real ports) ---
+microk_port: usbserial-A922BJHF
+ntc_port:    usbserial-FT3GCNKB0
+bath_port:   usbserial-FT3GCNKB1
+
+# --- experiment ---
+experiment: Transient1
+microk_channels: 1;2
+ntc_readout: NTC1;NTC2;TestSB
+# single block: all nodes in one line (first field = node count) -> token timing
+ntc_groups:  13;60
+ntc_nodes:   95;13;18;19;25;26;28;35;62;85;86;87;98
+
+# --- bath ---
+bath_protocol: bisynch
+bath_address:  1
+bath_encoding: int1
+
+# --- sweep ---
+plateaus:          -20;   5;  -20;   5      # apexes (reverses on arrival)
+ramp_c_per_min:      1;   1;    2;   2      # down-up at 1 C/min, then at 2 C/min
+plateau_minutes:   0                         # no dwell
+gate_mode:         fixed                     # we WANT motion, no drift gate
+stability_tol:              0.3              # loose band + tiny window -> reverse on arrival
+stability_window:          0.1
+stability_timeout_per_10k: 60
+stability_timeout_min:     30
