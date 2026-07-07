@@ -210,6 +210,12 @@ def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
     return text, value_times, complete
 
 
+# Single-node streaming: re-issue NODES only after this many seconds with no DATA
+# row. Must exceed one read_tokenized_line idle_timeout so a lone blank line between
+# sweeps does not trigger a needless (stream-thrashing) array re-init.
+RESYNC_AFTER = 25.0
+
+
 def classify_head_line(text, expected):
     """Classify a head line into (is_banner, is_data).
 
@@ -278,11 +284,17 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
                     expected = sum(1 for x in ntc_header_cols[g_idx].split("|") if x.strip())
                     r = False
                     i = 0
+                    last_data = time.time()
                     while (single or i < (Nr_MeasPoints + 3)) and not stop_event.is_set():
                         data_values, value_times, complete = read_tokenized_line(ser, stop_event)
                         if not data_values:
-                            if single:
-                                break        # head went quiet -> re-issue NODES to recover
+                            # Empty read = a blank keep-alive line OR a real idle. With few
+                            # nodes each sweep is short (~2 s) and the head emits blank lines
+                            # between sweeps; breaking on the first one would re-issue NODES
+                            # every ~2 s and thrash the stream (nothing but header spam). Only
+                            # re-issue NODES if NO data row has arrived for RESYNC_AFTER s.
+                            if single and time.time() - last_data > RESYNC_AFTER:
+                                break        # head truly stuck -> re-issue NODES to recover
                             continue
                         if not complete:
                             # Cut short by Ctrl-C or a mid-line head stall: a partial
@@ -313,6 +325,7 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
                             fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
                         fh.flush()
                         i += 1
+                        last_data = time.time()             # got a real row -> stream is alive
                         # On-screen only: raw NTC temperature per node for every
                         # configured NTC channel, plus a warning for open inputs.
                         temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
