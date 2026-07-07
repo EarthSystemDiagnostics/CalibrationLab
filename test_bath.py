@@ -642,6 +642,20 @@ def test_latest_ntc_temps_ignores_toffms(tmp="/tmp/_test_ntc_toffms.txt"):
     assert abs(d["N90"]["TestSB"] - (-45.652)) < 0.01     # last value clean, not '4952001; TOFFMS=0'
 
 
+def test_latest_ntc_fallback_header(tmp="/tmp/_test_ntc_fallback.txt"):
+    # Data rows only, NO in-file header (single big block: header scrolled out of the
+    # tail window) -> must resolve via the config fallback header.
+    open(tmp, "w").write(
+        "Group1; 9.19; 2026-07-02 16:00:09.1; 5812827 | 5540969 || 4540193 | 300; TOFFMS=0|1|2|3\n")
+    fb = ["N90_NTC1 | N90_NTC2 || N91_NTC1 | N91_NTC2"]     # c['headers'] label part
+    assert ca.latest_ntc_temps(tmp, channels=("NTC1",)) is None    # no fallback -> None
+    d = _chan(ca.latest_ntc_temps(tmp, channels=("NTC1",), fallback_headers=fb))
+    assert abs(d["N90"]["NTC1"] - (-51.021)) < 0.01
+    assert abs(d["N91"]["NTC1"] - (-42.968)) < 0.01
+    dg = _chan(ca.latest_ntc_temps_by_group(tmp, channels=("NTC1",), fallback_headers=fb))
+    assert abs(dg["N90"]["NTC1"] - (-51.021)) < 0.01
+
+
 def test_latest_ntc_by_group_ignores_toffms(tmp="/tmp/_test_ntc_toffms_g.txt"):
     open(tmp, "w").write(
         "Group1; SecondsElapsed; DateTimePC; N90_NTC1 || N91_NTC1\n"

@@ -355,7 +355,23 @@ def gate_line(stats, g):
             f"(n={stats['n']}, {stats['span_min']:.0f} min)")
 
 
-def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
+def _fallback_header(group, fallback_headers):
+    """Config header (Nxx_<channel> labels) for a group when the file's own header
+    is out of the tail-read window. Single big blocks emit the header only once per
+    ~60-point cycle, so a 32 KB tail can miss it -- fall back to the known layout.
+    `fallback_headers` is the per-group list c['headers'] with the leading
+    'SecondsElapsed; DateTimePC;' already stripped. Group 'GroupN' -> index N-1.
+    """
+    if not fallback_headers:
+        return None
+    try:
+        gi = int(str(group).replace("Group", "").strip()) - 1
+    except ValueError:
+        return None
+    return fallback_headers[gi] if 0 <= gi < len(fallback_headers) else None
+
+
+def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS, fallback_headers=None):
     """Tail the NTC log and return ntc.ntc_from_row() output for the most recent
     measurement row -- [(node, [(channel, temp_C_or_None), ...]), ...] -- or None.
 
@@ -399,6 +415,7 @@ def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
                     and any(("_" + ch) in hp[3] for ch in channels)):
                 header = hp[3]
                 break
+        header = header or _fallback_header(dgroup, fallback_headers)
         if header is None:
             return None
         return ntc.ntc_from_row(header, dblock, channels=channels) or None
@@ -406,7 +423,7 @@ def latest_ntc_temps(ntc_file, channels=ntc.NTC_CHANNELS):
         return None
 
 
-def latest_ntc_temps_by_group(ntc_file, channels=ntc.NTC_CHANNELS):
+def latest_ntc_temps_by_group(ntc_file, channels=ntc.NTC_CHANNELS, fallback_headers=None):
     """Merge the most recent data row of EVERY group -> all nodes at once.
 
     The head multiplexes groups, so latest_ntc_temps() only ever shows the last
@@ -447,6 +464,7 @@ def latest_ntc_temps_by_group(ntc_file, channels=ntc.NTC_CHANNELS):
                         and any(("_" + ch) in hp[3] for ch in channels)):
                     header = hp[3]
                     break
+            header = header or _fallback_header(grp, fallback_headers)
             if header is not None:
                 out.extend(ntc.ntc_from_row(header, dblock, channels=channels))
         def node_num(r):
@@ -553,7 +571,8 @@ def render_dashboard(bath, ctx):
                  f"latest <= {_clock(now + rs*60)} (<= {_fmt_hm(rs)})")
     L.append("-" * 64)
     L.append(" NTC [C] (raw, mean-S4):")
-    rows = latest_ntc_temps_by_group(ctx["logger_file"], channels=ctx["ntc_channels"])
+    rows = latest_ntc_temps_by_group(ctx["logger_file"], channels=ctx["ntc_channels"],
+                                     fallback_headers=ctx.get("ntc_headers"))
     if rows:
         for node, chans in rows:
             cells = "  ".join(f"{ch}={t:+.3f}" if t is not None else f"{ch}=--"
@@ -774,6 +793,7 @@ def main():
                         n=n_plateaus, setpoint=sp, ramp=ramp_str, timeout_min=timeout,
                         window_s=b["window_min"] * 60, microk_file=microk_file,
                         logger_file=logger_file, ntc_channels=ntc_channels,
+                        ntc_headers=[h.split(";", 2)[2] for h in c["headers"]],
                         est=est, plateau_start=plateau_t0)
             on_poll = None
             if dash:

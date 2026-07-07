@@ -245,15 +245,22 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
         start = datetime.now()
         print("[TempHead] File      :", logger_file)
         print("[TempHead] Waiting for measurement data ...")
+        # With a SINGLE node group there is nothing to round-robin to, so re-issuing
+        # NODES every Nr_MeasPoints forces a needless array re-init (the head blocks
+        # ~1-2 min and a fresh header appears). In that case issue NODES once and
+        # stream continuously; only re-issue it to RECOVER if the head goes silent.
+        single = len(headers) == 1
         with open(logger_file, "a") as fh:
             while not stop_event.is_set():
                 for g_idx in range(len(headers)):
                     ser.write(commands_groupNTCs[g_idx].encode("ascii"))
                     r = False
                     i = 0
-                    while i < (Nr_MeasPoints + 3) and not stop_event.is_set():
+                    while (single or i < (Nr_MeasPoints + 3)) and not stop_event.is_set():
                         data_values, value_times, complete = read_tokenized_line(ser, stop_event)
                         if not data_values:
+                            if single:
+                                break        # head went quiet -> re-issue NODES to recover
                             continue
                         if not complete:
                             # Cut short by Ctrl-C or a mid-line head stall: a partial
