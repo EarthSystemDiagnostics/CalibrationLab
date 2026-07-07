@@ -67,19 +67,19 @@ def read_config(param_path, exp_override=None):
     c["on_commands"]  = [f"{p} ON\r\n"  for p in positions if p in active]
     c["off_commands"] = [f"{p} OFF\r\n" for p in positions if p not in active]
 
+    # No blocks: the head keeps its node array (across sweeps and even restarts), so
+    # we read EVERY node as ONE continuous array -- a single NODES command, a single
+    # header, streamed without ever re-issuing. `Nr_NTCs_group` is still parsed for
+    # param/meta compatibility but no longer chunks the nodes. Token-accurate TOFFMS
+    # makes the wide (~minute-long) line harmless: each value keeps its own time.
     nodes = c["Logger_sensorNo"]
-    ng = c["Nr_NTCs_group"]
-    groups = [nodes[i:i + ng] for i in range(0, len(nodes), ng)]
-    c["commands_groupNTCs"] = [f"NODES {' '.join(g)} \r\n" for g in groups]
+    c["commands_groupNTCs"] = [f"NODES {' '.join(nodes)} \r\n"]
 
     standalones = ["DateTime", "TempADC"]
     standalone_cols = [s for s in standalones if s in active]
     node_positions  = [a for a in active if a not in standalones]
-    headers = []
-    for group in groups:
-        node_cols = [" | ".join(f"N{node.strip()}_{pos}" for pos in node_positions) for node in group]
-        headers.append("SecondsElapsed; DateTimePC; " + " || ".join(standalone_cols + node_cols))
-    c["headers"] = headers
+    node_cols = [" | ".join(f"N{node.strip()}_{pos}" for pos in node_positions) for node in nodes]
+    c["headers"] = ["SecondsElapsed; DateTimePC; " + " || ".join(standalone_cols + node_cols)]
 
     return c
 
@@ -239,7 +239,6 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
         print("[TempHead] Port ERROR:", e)
         return
     print("[TempHead] Port open :", logger_port)
-    Nr_MeasPoints = c["Nr_MeasPoints"]
     headers = c["headers"]
     commands_groupNTCs = c["commands_groupNTCs"]
     # Column labels per group (drop the "SecondsElapsed; DateTimePC; " prefix) so
@@ -266,73 +265,68 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
         start = datetime.now()
         print("[TempHead] File      :", logger_file)
         print("[TempHead] Waiting for measurement data ...")
-        # With a SINGLE node group there is nothing to round-robin to, so re-issuing
-        # NODES every Nr_MeasPoints forces a needless array re-init (the head blocks
-        # ~1-2 min and a fresh header appears). In that case issue NODES once and
-        # stream continuously; only re-issue it to RECOVER if the head goes silent.
-        single = len(headers) == 1
+        # No blocks: the head keeps its node array (across sweeps and even restarts),
+        # so we issue NODES ONCE and then just stream and log everything -- no group
+        # round-robin, no re-issue. Re-issuing NODES was what thrashed the stream (the
+        # head restarts on every command, so a per-sweep re-issue produced nothing but
+        # header spam). As a last-resort safety only, if NO data row arrives for
+        # RESYNC_AFTER seconds we re-send NODES ONCE to nudge a genuinely stuck head.
+        header = headers[0]
+        expected = sum(1 for x in ntc_header_cols[0].split("|") if x.strip())
+        ser.write(commands_groupNTCs[0].encode("ascii"))
+        header_written = False
+        i = 0
+        last_data = time.time()
         with open(logger_file, "a") as fh:
             while not stop_event.is_set():
-                for g_idx in range(len(headers)):
-                    ser.write(commands_groupNTCs[g_idx].encode("ascii"))
-                    # Expected value count for this group (nodes x channels). We recognise
-                    # real data rows by this STRUCTURE rather than waiting for the head's
-                    # "New Node Array:" banner: the head prints that banner ONLY when the node
-                    # array actually changes, so on a re-run (or single-node streaming) with
-                    # the array already set it stays silent -- the old banner-gate then never
-                    # opened and nothing was ever persisted. Structural detection is robust.
-                    expected = sum(1 for x in ntc_header_cols[g_idx].split("|") if x.strip())
-                    r = False
-                    i = 0
-                    last_data = time.time()
-                    while (single or i < (Nr_MeasPoints + 3)) and not stop_event.is_set():
-                        data_values, value_times, complete = read_tokenized_line(ser, stop_event)
-                        if not data_values:
-                            # Empty read = a blank keep-alive line OR a real idle. With few
-                            # nodes each sweep is short (~2 s) and the head emits blank lines
-                            # between sweeps; breaking on the first one would re-issue NODES
-                            # every ~2 s and thrash the stream (nothing but header spam). Only
-                            # re-issue NODES if NO data row has arrived for RESYNC_AFTER s.
-                            if single and time.time() - last_data > RESYNC_AFTER:
-                                break        # head truly stuck -> re-issue NODES to recover
-                            continue
-                        if not complete:
-                            # Cut short by Ctrl-C or a mid-line head stall: a partial
-                            # row would be a few values short -> drop it, don't persist.
-                            continue
-                        # Classify by structure (see classify_head_line) so persistence
-                        # does not depend on the head's "New Node Array:" banner.
-                        is_banner, is_data = classify_head_line(data_values, expected)
-                        if not r and (is_banner or is_data):
-                            r = True                          # group confirmed -> header once
-                            fh.write(f"Group{g_idx+1}; {headers[g_idx]}\r\n")
-                        if not (r and is_data):
-                            continue
-                        # Row time = the FIRST value's arrival (not end-of-line); the
-                        # per-value offsets below are measured from it.
-                        now = value_times[0] if value_times else datetime.now()
-                        sec = (now - start).total_seconds()
-                        if value_times:
-                            # ms offset of each value from the first (token-accurate:
-                            # the head measures sensors sequentially, so a 150-value
-                            # line spans ~2 min -- one stamp would alias the bath
-                            # oscillation into per-sensor error). Appended as a 5th
-                            # ';' field so old 4-field readers keep working.
-                            offs = "|".join(str(int(round((t - now).total_seconds() * 1000)))
-                                            for t in value_times)
-                            fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}; TOFFMS={offs}\n")
-                        else:
-                            fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
-                        fh.flush()
-                        i += 1
-                        last_data = time.time()             # got a real row -> stream is alive
-                        # On-screen only: raw NTC temperature per node for every
-                        # configured NTC channel, plus a warning for open inputs.
-                        temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
-                                                 channels=ntc_channels)
-                        tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
-                        if not quiet:
-                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
+                data_values, value_times, complete = read_tokenized_line(ser, stop_event)
+                if not data_values:
+                    # Blank keep-alive line or a gap between sweeps -- ignore it. Only if
+                    # the head has produced NO data row for RESYNC_AFTER s do we nudge it
+                    # with a single NODES (resetting the timer so we never spam commands).
+                    if time.time() - last_data > RESYNC_AFTER:
+                        print("[TempHead] no data for %.0fs -> re-sending NODES once" %
+                              RESYNC_AFTER)
+                        ser.write(commands_groupNTCs[0].encode("ascii"))
+                        last_data = time.time()
+                    continue
+                if not complete:
+                    # Cut short by Ctrl-C or a mid-line head stall: a partial row would
+                    # be a few values short -> drop it, don't persist.
+                    continue
+                # Classify by structure (see classify_head_line) so persistence does not
+                # depend on the head's "New Node Array:" banner (it prints that only when
+                # the array changes, i.e. never during steady streaming).
+                is_banner, is_data = classify_head_line(data_values, expected)
+                if not header_written and (is_banner or is_data):
+                    header_written = True                     # write the header once
+                    fh.write(f"Group1; {header}\r\n")
+                if not (header_written and is_data):
+                    continue
+                # Row time = the FIRST value's arrival (not end-of-line); the per-value
+                # offsets below are measured from it.
+                now = value_times[0] if value_times else datetime.now()
+                sec = (now - start).total_seconds()
+                if value_times:
+                    # ms offset of each value from the first (token-accurate: the head
+                    # measures sensors sequentially, so a 150-value line spans ~2 min --
+                    # one stamp would alias the bath oscillation into per-sensor error).
+                    # Appended as a 5th ';' field so old 4-field readers keep working.
+                    offs = "|".join(str(int(round((t - now).total_seconds() * 1000)))
+                                    for t in value_times)
+                    fh.write(f"Group1; {sec}; {now}; {data_values}; TOFFMS={offs}\n")
+                else:
+                    fh.write(f"Group1; {sec}; {now}; {data_values}\n")
+                fh.flush()
+                i += 1
+                last_data = time.time()                       # got a real row -> alive
+                # On-screen only: raw NTC temperature per node for every configured NTC
+                # channel, plus a warning for open inputs.
+                temps = ntc.ntc_from_row(ntc_header_cols[0], data_values,
+                                         channels=ntc_channels)
+                tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
+                if not quiet:
+                    print(f"[TempHead] {i}: {data_values}{tstr}")
     finally:
         ser.close()
         print("[TempHead] stopped, port closed.")
