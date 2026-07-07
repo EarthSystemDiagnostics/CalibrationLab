@@ -210,6 +210,21 @@ def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
     return text, value_times, complete
 
 
+def classify_head_line(text, expected):
+    """Classify a head line into (is_banner, is_data).
+
+    A data row has digits, no banner/echo keyword, and exactly `expected`
+    '|'-separated numeric values (nodes x channels). The head prints the
+    "New Node Array:" banner ONLY when the node array changes, so persistence must
+    not depend on it -- otherwise a re-run (or single-node streaming) with the array
+    already set would emit no banner and nothing would ever be written.
+    """
+    is_banner = "New Node Array:" in text or "NTC" in text
+    nvals = sum(1 for x in text.split("|") if x.strip())
+    is_data = (not is_banner and nvals == expected and any(ch.isdigit() for ch in text))
+    return is_banner, is_data
+
+
 def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
     try:
         ser = serial.Serial(logger_port, 19200, serial.EIGHTBITS,
@@ -254,6 +269,13 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
             while not stop_event.is_set():
                 for g_idx in range(len(headers)):
                     ser.write(commands_groupNTCs[g_idx].encode("ascii"))
+                    # Expected value count for this group (nodes x channels). We recognise
+                    # real data rows by this STRUCTURE rather than waiting for the head's
+                    # "New Node Array:" banner: the head prints that banner ONLY when the node
+                    # array actually changes, so on a re-run (or single-node streaming) with
+                    # the array already set it stays silent -- the old banner-gate then never
+                    # opened and nothing was ever persisted. Structural detection is robust.
+                    expected = sum(1 for x in ntc_header_cols[g_idx].split("|") if x.strip())
                     r = False
                     i = 0
                     while (single or i < (Nr_MeasPoints + 3)) and not stop_event.is_set():
@@ -266,34 +288,38 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
                             # Cut short by Ctrl-C or a mid-line head stall: a partial
                             # row would be a few values short -> drop it, don't persist.
                             continue
+                        # Classify by structure (see classify_head_line) so persistence
+                        # does not depend on the head's "New Node Array:" banner.
+                        is_banner, is_data = classify_head_line(data_values, expected)
+                        if not r and (is_banner or is_data):
+                            r = True                          # group confirmed -> header once
+                            fh.write(f"Group{g_idx+1}; {headers[g_idx]}\r\n")
+                        if not (r and is_data):
+                            continue
                         # Row time = the FIRST value's arrival (not end-of-line); the
                         # per-value offsets below are measured from it.
                         now = value_times[0] if value_times else datetime.now()
                         sec = (now - start).total_seconds()
-                        if "New Node Array:" in data_values:   # new node group confirmed
-                            r = True
-                            fh.write(f"Group{g_idx+1}; {headers[g_idx]}\r\n")
-                        if r:
-                            if value_times:
-                                # ms offset of each value from the first (token-accurate:
-                                # the head measures sensors sequentially, so a 150-value
-                                # line spans ~2 min -- one stamp would alias the bath
-                                # oscillation into per-sensor error). Appended as a 5th
-                                # ';' field so old 4-field readers keep working.
-                                offs = "|".join(str(int(round((t - now).total_seconds() * 1000)))
-                                                for t in value_times)
-                                fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}; TOFFMS={offs}\n")
-                            else:
-                                fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
-                            fh.flush()
-                            i += 1
-                            # On-screen only: raw NTC temperature per node for every
-                            # configured NTC channel, plus a warning for open inputs.
-                            temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
-                                                     channels=ntc_channels)
-                            tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
-                            if not quiet:
-                                print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
+                        if value_times:
+                            # ms offset of each value from the first (token-accurate:
+                            # the head measures sensors sequentially, so a 150-value
+                            # line spans ~2 min -- one stamp would alias the bath
+                            # oscillation into per-sensor error). Appended as a 5th
+                            # ';' field so old 4-field readers keep working.
+                            offs = "|".join(str(int(round((t - now).total_seconds() * 1000)))
+                                            for t in value_times)
+                            fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}; TOFFMS={offs}\n")
+                        else:
+                            fh.write(f"Group{g_idx+1}; {sec}; {now}; {data_values}\n")
+                        fh.flush()
+                        i += 1
+                        # On-screen only: raw NTC temperature per node for every
+                        # configured NTC channel, plus a warning for open inputs.
+                        temps = ntc.ntc_from_row(ntc_header_cols[g_idx], data_values,
+                                                 channels=ntc_channels)
+                        tstr = "  ->  " + ntc.format_ntc(temps) if temps else ""
+                        if not quiet:
+                            print(f"[TempHead] G{g_idx+1} {i}/{Nr_MeasPoints + 3}: {data_values}{tstr}")
     finally:
         ser.close()
         print("[TempHead] stopped, port closed.")

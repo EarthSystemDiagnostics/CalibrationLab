@@ -632,6 +632,23 @@ def test_read_tokenized_line_incomplete_flagged():
     assert text == "864418 | 859990 | 9"
 
 
+def test_classify_head_line_single_node_without_banner():
+    import calibration_log as cl
+    # Single node, 3 channels -> expected = 3. A re-run leaves the head on the same
+    # array so it emits NO banner; the data row must still be recognised as data.
+    is_banner, is_data = cl.classify_head_line("5812827 | 5732217 | 5648185", 3)
+    assert is_data is True and is_banner is False
+    # The banner (when it does appear) is flagged, and is not data.
+    is_banner, is_data = cl.classify_head_line("New Node Array: 95", 3)
+    assert is_banner is True and is_data is False
+    # A short/garbled row (wrong value count) is neither -> dropped.
+    is_banner, is_data = cl.classify_head_line("5812827 | 5732217", 3)
+    assert is_data is False
+    # Multi-node row ('||' between nodes): 2 nodes x 3 ch = 6 values.
+    _, is_data = cl.classify_head_line("1 | 2 | 3 || 4 | 5 | 6", 6)
+    assert is_data is True
+
+
 def test_latest_ntc_temps_ignores_toffms(tmp="/tmp/_test_ntc_toffms.txt"):
     # New 5-field row: the trailing '; TOFFMS=...' must not corrupt the last value.
     open(tmp, "w").write(
