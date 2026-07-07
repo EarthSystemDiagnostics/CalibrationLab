@@ -606,9 +606,10 @@ class _FakeSer:
 def test_read_tokenized_line_counts_values():
     import calibration_log as cl
     ev = threading.Event()
-    text, times = cl.read_tokenized_line(_FakeSer(b"864418 | 859990 || 861084 \n"), ev)
+    text, times, complete = cl.read_tokenized_line(_FakeSer(b"864418 | 859990 || 861084 \n"), ev)
     assert text == "864418 | 859990 || 861084"           # same content readline() gives
     assert len(times) == 3                                # 3 values; '||' counted once
+    assert complete is True                               # ended on newline
     assert all(times[k] <= times[k + 1] for k in range(len(times) - 1))  # monotonic
 
 
@@ -616,10 +617,19 @@ def test_read_tokenized_line_meta_and_empty():
     import calibration_log as cl
     ev = threading.Event()
     # a 'New Node Array' meta line is one token -> one stamp (worker filters it by text)
-    text, times = cl.read_tokenized_line(_FakeSer(b"New Node Array: 88 89\n"), ev)
-    assert text == "New Node Array: 88 89" and len(times) == 1
-    # nothing to read -> (None, [])
-    assert cl.read_tokenized_line(_FakeSer(b""), threading.Event(), idle_timeout=0) == (None, [])
+    text, times, complete = cl.read_tokenized_line(_FakeSer(b"New Node Array: 88 89\n"), ev)
+    assert text == "New Node Array: 88 89" and len(times) == 1 and complete is True
+    # nothing to read -> (None, [], False)
+    assert cl.read_tokenized_line(_FakeSer(b""), threading.Event(), idle_timeout=0) == (None, [], False)
+
+
+def test_read_tokenized_line_incomplete_flagged():
+    import calibration_log as cl
+    # no trailing newline -> the head was cut off mid-line -> complete must be False
+    text, times, complete = cl.read_tokenized_line(
+        _FakeSer(b"864418 | 859990 | 9"), threading.Event(), idle_timeout=0)
+    assert complete is False                              # caller will drop this row
+    assert text == "864418 | 859990 | 9"
 
 
 def test_latest_ntc_temps_ignores_toffms(tmp="/tmp/_test_ntc_toffms.txt"):

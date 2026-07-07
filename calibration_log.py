@@ -165,18 +165,21 @@ def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
     byte-by-byte and capture datetime.now() at the first '|' after each value (and
     at the newline for the last one), giving the true per-value arrival time.
 
-    Returns (text, value_times):
+    Returns (text, value_times, complete):
         text         the line without CR/LF, same content readline().strip() gives
                      ("v | v || v ..."); None if stopped/idle with nothing received.
         value_times  datetime per value, left-to-right, aligned with splitting the
                      data block on runs of '|' (re.split(r"\\|+", text)). Runs of
                      '|' (the '||' node separators) count once, so len(value_times)
                      == number of numeric values == nodes x channels.
-    Stops early if `stop_event` is set or the head goes silent for `idle_timeout`
-    seconds (a stall), returning whatever was collected.
+        complete     True only if the line ended cleanly on a newline. False means
+                     it was cut short by `stop_event` (Ctrl-C) or by `idle_timeout`
+                     (head went silent mid-line) -- the caller should NOT persist a
+                     partial row (it would be short a few values).
     """
     buf, token, value_times = bytearray(), bytearray(), []
     prev_pipe = False
+    complete = False
     last = time.time()
     while not stop_event.is_set():
         ch = ser.read(1)
@@ -188,6 +191,7 @@ def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
         if ch == b"\n":
             if token.strip():                   # last value ends at the newline
                 value_times.append(datetime.now())
+            complete = True
             break
         if ch == b"\r":
             continue
@@ -202,8 +206,8 @@ def read_tokenized_line(ser, stop_event, idle_timeout=20.0):
             token += ch
     text = buf.decode("utf-8", "replace").strip()
     if not text and not value_times:
-        return None, []
-    return text, value_times
+        return None, [], False
+    return text, value_times, complete
 
 
 def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
@@ -248,8 +252,12 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
                     r = False
                     i = 0
                     while i < (Nr_MeasPoints + 3) and not stop_event.is_set():
-                        data_values, value_times = read_tokenized_line(ser, stop_event)
+                        data_values, value_times, complete = read_tokenized_line(ser, stop_event)
                         if not data_values:
+                            continue
+                        if not complete:
+                            # Cut short by Ctrl-C or a mid-line head stall: a partial
+                            # row would be a few values short -> drop it, don't persist.
                             continue
                         # Row time = the FIRST value's arrival (not end-of-line); the
                         # per-value offsets below are measured from it.
