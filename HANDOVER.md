@@ -38,9 +38,8 @@ unverändert und legt nur die Badsteuerung darüber.
   du also einfach `main`.
 - Offline-Tests laufen durch: `python3 test_bath.py` → 47 passed,
   `python3 test_bisynch.py` → 15 passed. Beide brauchen **keine Hardware**.
-- Nicht eingecheckt im Arbeitsordner (bewusst, siehe §6): `PID_TUNING.md`,
-  `tools/port_detect.py`, sowie die heutigen Doku-Updates in `README.md`,
-  `DATA_FORMATS.md`, `TODO.md`, `param_combined.txt`.
+- Alles ist eingecheckt und auf `origin` gepusht, das Arbeitsverzeichnis ist
+  sauber.
 - Zuletzt real gefahren wurde die 5-Sensor-Konfiguration
   (`param_combined.txt`, Knoten 90–94) und der 24-h-Plan `param_24h.txt`.
 
@@ -111,7 +110,65 @@ Gleichtakt heraus. Rezept steht am Ende von `DATA_FORMATS.md`.
 
 ---
 
-## 5. Auswertung / R-Pipeline
+## 5. Das Bad ansteuern — welche Kommandos es gibt
+
+Drei Ebenen, von oben nach unten:
+
+**(1) Im Lauf** macht `calibration_auto.py` alles selbst; du stellst nur
+`plateaus`, `plateau_minutes` und `ramp_c_per_min` in der Param-Datei ein.
+
+**(2) Von Hand, ohne Logging** — `bisynch.py` für die Libra 785 (der 3504):
+
+```bash
+python3 bisynch.py --port /dev/cu.usbserial-XXXX --scan            # Framing + Adresse finden (read-only)
+python3 bisynch.py --port … --addr 1 --identify                     # alle Mnemonics lesen und gegen das Panel halten
+python3 bisynch.py --port … --addr 1 --read PV                      # gemessene Temperatur
+python3 bisynch.py --port … --addr 1 --read SL                      # Sollwert
+python3 bisynch.py --port … --addr 1 --monitor --interval 5          # PV/SP/WSP/OP laufend
+python3 bisynch.py --port … --addr 1 --write SL -15                  # SOLLWERT SETZEN -- das Bad fährt los
+python3 bisynch.py --port … --addr 1 --write RR 1                    # Rampenbegrenzung 1 °C/min (0 = aus)
+```
+
+`bath.py` ist dasselbe in Modbus und erreicht an der Libra nur den
+Übertemperatur-Begrenzer (Slave 2); für andere Isotech-Bäder mit Modbus-Regler
+kann es alles: `--monitor`, `--set -40`, `--wait -40 --minutes 20`,
+`--plateaus "-40;-20;0" --minutes 15`, `--scan` bei Kommunikationsproblemen.
+
+**Kommandos sind Zwei-Buchstaben-Mnemonics** (EI-Bisynch, ASCII). Die
+gebräuchlichen, alle mit `--read` lesbar:
+
+| Mnemonic | Bedeutung |
+|---|---|
+| `PV` | gemessene Temperatur (process value) |
+| `SL` | Sollwert — **der schreibbare**, den wir setzen |
+| `SP` / `S1` / `S2` | Sollwert bzw. Sollwert 1/2 (je nach Konfiguration) |
+| `WS` | Arbeits-Sollwert, also der rampenbegrenzte Zwischenwert |
+| `OP` | Ausgangsleistung in % |
+| `RR` | Rampenrate des Sollwerts (°C/min, 0 = aus) |
+| `HS` / `LS` | Sollwert-Ober-/Untergrenze |
+| `SM` | Sollwert-Auswahl / Modus |
+| `XP`, `TI`, `TD` | PID: Proportionalband, Nachstellzeit, Vorhaltzeit |
+| `HB`, `LB` | Cutback hoch/tief — der Anti-Überschwing-Hebel |
+| `AT` | Auto-Tune |
+
+Die ersten vier stehen in `bisynch.py` (`IDENTIFY_MNEMONICS`) mit Erklärung, die
+PID-Zeile in `PID_TUNING.md`. Vollständig sind sie im **Eurotherm 3500 Series
+Engineering Handbook, HA027988** dokumentiert.
+
+**(3) Aus Python**: `BisynchBath` in `bisynch.py` bzw. `Bath` in `bath.py` haben
+dieselbe Schnittstelle — `read_pv()`, `read_setpoint()`, `read_working_setpoint()`,
+`read_output()`, `set_setpoint(T)`, `set_ramp_rate(c_per_min)`, `read_ramp_rate()`,
+`wait_until_stable(target, tol, window_s)`, `close()`. `set_setpoint()` liest den
+Wert zurück und meldet, wenn der Regler ihn nicht angenommen hat.
+
+> **Lesen ist harmlos, Schreiben nicht.** `--read`, `--scan`, `--identify` und
+> `--monitor` ändern nichts. `--write SL …` fährt das Bad. Der
+> Übertemperatur-Begrenzer bleibt in jedem Fall aktiv — er ist ein eigenes Gerät
+> und hört nicht auf diese Kommandos.
+
+---
+
+## 6. Auswertung / R-Pipeline
 
 `DATA_FORMATS.md` ist die maßgebliche Beschreibung der vier Ausgabedateien
 (`_microk`, `_ntc`, `_meta`, `_plateaus`) inklusive Lese-Rezept. Zwei Punkte für
@@ -135,28 +192,24 @@ werden.
 
 ---
 
-## 6. Offen / nächste Schritte
+## 7. Offen / nächste Schritte
 
-1. **Einchecken.** `PID_TUNING.md` und `tools/port_detect.py` liegen unversioniert
-   im Ordner, dazu die heutigen Doku-Updates. Ich habe sie bewusst nicht selbst
-   committet — schau sie dir an und nimm sie mit demselben Commit auf den Branch,
-   mit dem du weiterarbeitest.
-2. **Badüberschwingen.** Das Bad überschwingt ~2 °C bei einem Sprung; wir halten
+1. **Badüberschwingen.** Das Bad überschwingt ~2 °C bei einem Sprung; wir halten
    es mit `ramp_c_per_min: 1` klein, das kostet Zeit. Der eigentliche Hebel ist
    die PID/Cutback/Auto-Tune des 3504 über dieselbe serielle Leitung — Plan,
    Parameter und Sicherheitsregeln in **`PID_TUNING.md`**. Erster Schritt ist rein
    lesend (`bisynch.py --read XP` usw.), nichts davon hängt am Kalibriercode.
-3. **Zwei SPRTs** (`microk_channels: 1;2;3`) sind implementiert, in den letzten
+2. **Zwei SPRTs** (`microk_channels: 1;2;3`) sind implementiert, in den letzten
    Läufen aber nicht benutzt — einmal prüfen, bevor du dich darauf verlässt.
    Das Gate nimmt sonst den ersten SPRT (`gate_channel:` setzt es explizit).
-4. **Ein Lauf mit dem aktuellen Stand am echten Bad** — alles außer der
+3. **Ein Lauf mit dem aktuellen Stand am echten Bad** — alles außer der
    PID-Optimierung ist gefahren, aber die letzten Doku- und Struktur-Änderungen
    sind seit dem 07.07.2026 nicht mehr am Gerät gegengeprüft.
-5. Der Rest steht in `TODO.md`.
+4. Der Rest steht in `TODO.md`.
 
 ---
 
-## 7. Fallstricke im Labor
+## 8. Fallstricke im Labor
 
 - **Ein Programm pro Port.** Läuft die Kalibration, darf `bath.py`/`bisynch.py`/
   `port_detect.py` nicht parallel auf denselben Port — sonst „keine Kommunikation".
@@ -176,7 +229,7 @@ werden.
 
 ---
 
-## 8. Kontakt
+## 9. Kontakt
 
 Bei allem, was nach Protokoll-Archäologie riecht (Bisynch-Mnemonics, Gate-Logik,
 `TOFFMS`), erst `README.md` und die Kopfkommentare der jeweiligen Datei lesen —
