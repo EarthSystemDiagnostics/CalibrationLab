@@ -26,7 +26,9 @@ microk_channels: 1;2
 
 # NTC head readout (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
 ntc_readout: NTC1;NTC2;TestSB
-# Sensors per group ; measurement points per group
+# LEGACY field (sensors per group ; measurement points per group): still required
+# and copied into the meta file, but it no longer chunks the nodes -- all nodes
+# are read as ONE continuous array.
 ntc_groups: 5;60
 # Sensor node IDs
 ntc_nodes: 90;91;92;93;94

@@ -13,3 +13,8 @@ Output/
 # Python
 __pycache__/
 *.pyc
+
+# R
+.Rhistory
+.RData
+.Rproj.user/

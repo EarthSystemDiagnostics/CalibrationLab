@@ -12,7 +12,10 @@ can be matched up afterwards purely by their wall-clock timestamps.
 Two ways to run:
 
 - **`calibration_log.py`** — *legacy / passive*. Logs both instruments; the bath
-  temperature is set **manually**. Unchanged.
+  temperature is set **manually**. It contains the whole logging machinery (both
+  serial workers, the token-accurate NTC readout, the meta file) — `calibration_auto.py`
+  imports it and only adds the bath control on top, so both tools write byte-identical
+  data files.
 - **`calibration_auto.py`** — *automated*. Additionally drives the **Isotech Libra
   785** bath through a list of temperature plateaus (via `bisynch.py`, EI-Bisynch
   over RS232) while logging continuously, ends each plateau when the SPRT reference
@@ -42,7 +45,10 @@ python3 -m pip install -r requirements.txt
 | SchwaRTech/AWI Temperature head | FTDI FT2232H (dual, ch0) | 19200 |
 
 The exact `/dev/cu.usbserial-*` names can change between sessions — the script
-lets you **pick the port interactively at runtime** (see below).
+lets you **pick the port interactively at runtime** (see below). If you are unsure
+which device is on which port, `tools/port_detect.py` lists them and can probe them
+read-only (`--list`, `--map param_combined.txt`, `--probe`) — run it with the
+calibration stopped, one program per port.
 
 ---
 
@@ -76,7 +82,7 @@ files keep the raw values only — the display conversion never touches them):
 [MicroK] Port open : /dev/cu.usbserial-A922BJHF
 [TempHead] Head is awake.
 [MicroK] #1 Ch2: 0.234568   ->  -19.2540 C
-[TempHead] G1 1/63: 5812827 | … || 4540193 | …   ->  N94=-46.661 N96=-39.454
+[TempHead] 1: 5812827 | … || 4540193 | …   ->  N94=-46.661 N96=-39.454
 ...
 ```
 
@@ -122,7 +128,7 @@ ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 
 ---
 
-## Output — three files per run, in `./Output/`
+## Output — three files per run, in `./Output/` (four with `calibration_auto.py`)
 
 ```
 <experiment>_<YYYYMMDD-HHMMSS>_microk.txt   # MicroK / SPRT data
@@ -169,6 +175,11 @@ Group1; 13.77; 2026-07-02 16:00:03.15; 5310211 | 5253038 | 5192965 || 5113788 | 
 - The header appears only once (not per cycle), so on a long run it scrolls out of a
   tail-read window; readers fall back to the known column layout from the config.
   `New Node Array:` / echo lines are recognised structurally and filtered out.
+- Rows that arrive incomplete (Ctrl-C, or the head stalling mid-line) are dropped
+  rather than written, so every row in the file is full width.
+- If **no** data row arrives for 25 s (`RESYNC_AFTER` in `calibration_log.py`), the
+  logger re-sends `NODES` **once** to nudge a genuinely stuck head — never more
+  often, because every command restarts the head's sweep.
 - One array = one clean wide table, directly usable.
 
 **Per-value timestamps (`TOFFMS`).** The head measures its sensors **sequentially**
@@ -376,10 +387,14 @@ mnemonics so you can match them against the 3504 front panel before writing.
 | `test_bath.py`        | Offline test suite (fake slave, gate, config)       |
 | `test_bisynch.py`     | Offline EI-Bisynch protocol test suite              |
 | `tools/bath_sim.py`   | Modbus-RTU bath simulator (serial-level testing)    |
+| `tools/port_detect.py`| Standalone helper: which device is on which serial port (list / safe probe) |
 | `param_combined.txt`  | Configuration (logging + bath automation)           |
 | `param_24h.txt`       | Ready-to-run 24 h down-sweep + up-anchor schedule   |
+| `param_transient.txt` | Ramp-only sweep (no dwell) for the dynamic response |
 | `DATA_FORMATS.md`     | Output file formats (for the R calibration pipeline)|
-| `requirements.txt`    | Python dependencies                                 |
+| `HANDOVER.md`         | Übergabe / getting-started for whoever takes the code over |
+| `PID_TUNING.md`       | Notes/plan for reducing the bath overshoot (not wired into the code) |
+| `requirements.txt`    | Python dependencies (`tools/requirements-sim.txt` adds the simulator's) |
 | `TODO.md`             | Known limitations / future work                     |
 
 ---
