@@ -32,9 +32,10 @@ unverändert und legt nur die Badsteuerung darüber.
 
 ## 2. Stand heute
 
-- Branch `bath-control-and-live-temps`, 37 Commits vor `main`, auf `origin`
-  gepusht, **noch nicht gemerged**. Der Merge nach `main` wäre dein Aufruf,
-  sobald du einmal damit gemessen hast.
+- Die Arbeit ist am 24.08.2026 nach `main` gemerged (Fast-Forward, `main` hatte
+  seit dem 02.07.2026 keine eigenen Commits). `main` und
+  `bath-control-and-live-temps` zeigen auf denselben Stand — auschecken kannst
+  du also einfach `main`.
 - Offline-Tests laufen durch: `python3 test_bath.py` → 47 passed,
   `python3 test_bisynch.py` → 15 passed. Beide brauchen **keine Hardware**.
 - Nicht eingecheckt im Arbeitsordner (bewusst, siehe §6): `PID_TUNING.md`,
@@ -148,7 +149,9 @@ werden.
 3. **Zwei SPRTs** (`microk_channels: 1;2;3`) sind implementiert, in den letzten
    Läufen aber nicht benutzt — einmal prüfen, bevor du dich darauf verlässt.
    Das Gate nimmt sonst den ersten SPRT (`gate_channel:` setzt es explizit).
-4. **Merge nach `main`**, sobald ein Lauf mit dem aktuellen Stand durch ist.
+4. **Ein Lauf mit dem aktuellen Stand am echten Bad** — alles außer der
+   PID-Optimierung ist gefahren, aber die letzten Doku- und Struktur-Änderungen
+   sind seit dem 07.07.2026 nicht mehr am Gerät gegengeprüft.
 5. Der Rest steht in `TODO.md`.
 
 ---
