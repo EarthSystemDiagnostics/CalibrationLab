@@ -4,7 +4,7 @@
 Simulated Eurotherm Series 2000 Modbus-RTU slave for testing bath.py over a real
 serial port -- WITHOUT the physical bath.
 
-Why: test_bath.py checks the logic against a fake in-process instrument, but it
+Why: tests/test_bath.py checks the logic against a fake in-process instrument, but it
 does NOT exercise the real minimalmodbus RTU framing / serial round-trip. This
 simulator does: it is a genuine Modbus slave you talk to over a serial port, so
 bath.py -> minimalmodbus -> pyserial -> (pty) -> pymodbus goes through the actual

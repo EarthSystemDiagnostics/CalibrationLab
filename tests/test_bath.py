@@ -153,6 +153,9 @@ def configure(**kw):
 
 
 # Now safe to import the code under test
+import os as _os, sys as _sys                                   # noqa: E402
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _ROOT)          # repo root: the modules under test
 import bath                         # noqa: E402
 import sprt                         # noqa: E402
 import ntc                          # noqa: E402
@@ -179,7 +182,7 @@ def test_sim_encoding_matches_bath():
     # The pymodbus simulator's wire encoding must round-trip against what bath.py
     # (via minimalmodbus) expects: two's-complement scaled ints, and big-word-order
     # IEEE floats at 2*native + 0x8000.
-    sys.path.insert(0, "tools")
+    sys.path.insert(0, _os.path.join(_ROOT, "tools"))
     import bath_sim as sim
     for temp, dec in [(0.0, 1), (25.3, 1), (-40.0, 2), (-79.99, 2), (125.0, 1)]:
         assert abs(sim.dec_int(sim.enc_int(temp, dec), dec) - round(temp, dec)) < 1e-9

@@ -1,7 +1,7 @@
 # Output data formats — for the R calibration pipeline
 
 Every run of `calibration_log.py` (legacy) or `calibration_auto.py` (bath-driven)
-writes to `./Output/` **four** files that share a stem
+writes to `./data/Output/` **four** files that share a stem
 `<experiment>_<YYYYMMDD-HHMMSS>_`:
 
 | File            | Content                                             | Written by |

@@ -36,35 +36,46 @@ unverändert und legt nur die Badsteuerung darüber.
   seit dem 02.07.2026 keine eigenen Commits). `main` und
   `bath-control-and-live-temps` zeigen auf denselben Stand — auschecken kannst
   du also einfach `main`.
-- Offline-Tests laufen durch: `python3 test_bath.py` → 47 passed,
-  `python3 test_bisynch.py` → 15 passed. Beide brauchen **keine Hardware**.
+- Offline-Tests laufen durch: `python3 tests/test_bath.py` → 47 passed,
+  `python3 tests/test_bisynch.py` → 15 passed. Beide brauchen **keine Hardware**.
 - Alles ist eingecheckt und auf `origin` gepusht, das Arbeitsverzeichnis ist
   sauber.
 - Zuletzt real gefahren wurde die 5-Sensor-Konfiguration
-  (`param_combined.txt`, Knoten 90–94) und der 24-h-Plan `param_24h.txt`.
+  (`config/param_combined.txt`, Knoten 90–94) und der 24-h-Plan `config/param_24h.txt`.
 
 ---
 
-## 3. Ein Lauf, Schritt für Schritt
+## 3. Wo was liegt
+
+Seit dem 24.08.2026 ist der Ordner sortiert: die Python-Module liegen oben,
+darunter `config/` (Param-Dateien), `docs/` (diese Datei, `DATA_FORMATS.md`,
+`PID_TUNING.md`, `TODO.md`), `tests/`, `tools/` und `data/Output/` für die
+Messdaten (nicht in git). **Aufgerufen wird aus der Wurzel** — der Vorgabepfad
+`config/param_combined.txt` und das Ausgabeverzeichnis `data/Output/` sind
+relativ dazu. Die Testsuiten laufen von überall.
+
+---
+
+## 4. Ein Lauf, Schritt für Schritt
 
 ```bash
 python3 -m pip install -r requirements.txt      # pyserial + minimalmodbus
 python3 tools/port_detect.py --list             # welcher Adapter ist wo?
 ```
 
-1. **`param_combined.txt` anpassen** — oben die drei Ports (Substring reicht,
+1. **`config/param_combined.txt` anpassen** — oben die drei Ports (Substring reicht,
    z. B. `usbserial-FT3GCNKB0`), dann `experiment`, `ntc_nodes`, `ntc_readout`,
    und unten die Plateaus.
 2. **Trockenlauf**: `python3 calibration_auto.py --dry-run` — verbindet sich mit
    dem Bad und liest PV/Setpoint/Output, **ohne** etwas zu verstellen. Wenn hier
    sinnvolle Zahlen kommen, stimmen Protokoll und Adresse.
 3. **Lauf starten**: `python3 calibration_auto.py --dashboard`
-   (bzw. `--param param_24h.txt --dashboard` für den 24-h-Plan).
+   (bzw. `--param config/param_24h.txt --dashboard` für den 24-h-Plan).
    Beim Start: Ports bestätigen (Enter nimmt den Vorschlag) und eine
    **Freitext-Beschreibung** eingeben — die landet im `_meta.txt`.
 4. **Laufen lassen.** Abbruch mit `Ctrl-C`: die Logger schließen sauber, das Bad
    bleibt auf seinem letzten Setpoint stehen (es wird nicht zurückgefahren).
-5. Ausgabedateien liegen in `./Output/`, ein Satz pro Lauf mit gemeinsamem
+5. Ausgabedateien liegen in `./data/Output/`, ein Satz pro Lauf mit gemeinsamem
    Zeitstempel im Namen. Sie dürfen **während** des Laufs kopiert werden, jede
    Zeile ist sofort auf Platte.
 
@@ -73,7 +84,7 @@ Nur das Bad ansteuern, ohne Logging: `bath.py` (Modbus) bzw. `bisynch.py`
 
 ---
 
-## 4. Vier Dinge, die man verstanden haben muss
+## 5. Vier Dinge, die man verstanden haben muss
 
 **(a) Das Bad hat zwei Controller auf einer Leitung.**
 Libra 785: der **Eurotherm 3504** ist der eigentliche Regler und spricht
@@ -110,7 +121,7 @@ Gleichtakt heraus. Rezept steht am Ende von `DATA_FORMATS.md`.
 
 ---
 
-## 5. Das Bad ansteuern — welche Kommandos es gibt
+## 6. Das Bad ansteuern — welche Kommandos es gibt
 
 Drei Ebenen, von oben nach unten:
 
@@ -168,7 +179,7 @@ Wert zurück und meldet, wenn der Regler ihn nicht angenommen hat.
 
 ---
 
-## 6. Auswertung / R-Pipeline
+## 7. Auswertung / R-Pipeline
 
 `DATA_FORMATS.md` ist die maßgebliche Beschreibung der vier Ausgabedateien
 (`_microk`, `_ntc`, `_meta`, `_plateaus`) inklusive Lese-Rezept. Zwei Punkte für
@@ -192,7 +203,7 @@ werden.
 
 ---
 
-## 7. Offen / nächste Schritte
+## 8. Offen / nächste Schritte
 
 1. **Badüberschwingen.** Das Bad überschwingt ~2 °C bei einem Sprung; wir halten
    es mit `ramp_c_per_min: 1` klein, das kostet Zeit. Der eigentliche Hebel ist
@@ -209,13 +220,13 @@ werden.
 
 ---
 
-## 8. Fallstricke im Labor
+## 9. Fallstricke im Labor
 
 - **Ein Programm pro Port.** Läuft die Kalibration, darf `bath.py`/`bisynch.py`/
   `port_detect.py` nicht parallel auf denselben Port — sonst „keine Kommunikation".
 - **Portnamen ändern sich beim Umstecken.** Die Hints in der Param-Datei sind nur
   Vorauswahl; beim Start wird ohnehin bestätigt. `tools/port_detect.py --map
-  param_combined.txt` zeigt die Zuordnung.
+  config/param_combined.txt` zeigt die Zuordnung.
 - **Antwortet das Bad nicht:** `bisynch.py --port … --scan` (read-only) sucht
   Framing und Adresse; erwartet werden 7E1/Adresse 1. Erst danach `--identify`,
   um die Mnemonics gegen das Frontpanel abzugleichen, und erst dann schreiben.
@@ -229,7 +240,7 @@ werden.
 
 ---
 
-## 9. Kontakt
+## 10. Kontakt
 
 Bei allem, was nach Protokoll-Archäologie riecht (Bisynch-Mnemonics, Gate-Logik,
 `TOFFMS`), erst `README.md` und die Kopfkommentare der jeweiligen Datei lesen —

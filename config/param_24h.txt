@@ -1,7 +1,7 @@
 # ============================================================
 #  Calibration  -  24 h down-sweep with brackets + up-anchors
 #  Same single-file format as param_combined.txt. Run with:
-#      python3 calibration_auto.py --param param_24h.txt --dashboard
+#      python3 calibration_auto.py --param config/param_24h.txt --dashboard
 #
 #  Design (empirical, from the recalib runs):
 #   * Plateaus are gated on dT/dt of the SPRT, not a fixed clock: a plateau ends

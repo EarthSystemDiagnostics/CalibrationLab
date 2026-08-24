@@ -4,10 +4,10 @@
 Combined calibration logging (MicroK + SchwaRTech/AWI Temperature head) as a command-line tool.
 
 Reads both serial instruments in parallel (one thread each) and writes three files
-per run to ./Output/:  <exp>_<time>_microk.txt, _ntc.txt, _meta.txt
+per run to ./data/Output/:  <exp>_<time>_microk.txt, _ntc.txt, _meta.txt
 
 Usage:
-    python3 calibration_log.py                 # uses param_combined.txt
+    python3 calibration_log.py                 # uses config/param_combined.txt
     python3 calibration_log.py --param x.txt    # different config file
     python3 calibration_log.py --exp Testrun    # override the experiment name
 
@@ -22,6 +22,9 @@ from datetime import datetime
 
 import serial
 import serial.tools.list_ports
+
+# Measurement data lives under data/ (git-ignored); code and config do not.
+OUTPUT_DIR = os.path.join("data", "Output")
 
 import sprt   # SPRT ratio -> temperature (on-screen display only)
 import ntc    # NTC raw counts -> temperature (on-screen display only)
@@ -360,7 +363,7 @@ def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, 
 # --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Combined MicroK + NTC calibration logging")
-    ap.add_argument("--param", default="param_combined.txt", help="path to the parameter file")
+    ap.add_argument("--param", default="config/param_combined.txt", help="path to the parameter file")
     ap.add_argument("--exp", default=None, help="override the experiment name")
     args = ap.parse_args()
 
@@ -382,11 +385,11 @@ def main():
     print("Selected  TempHead ->", logger_port)
 
     # File names
-    os.makedirs("Output", exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     run_stamp   = time.strftime("%Y%m%d-%H%M%S")
-    microk_file = f"Output/{c['exp']}_{run_stamp}_microk.txt"
-    logger_file = f"Output/{c['exp']}_{run_stamp}_ntc.txt"
-    meta_file   = f"Output/{c['exp']}_{run_stamp}_meta.txt"
+    microk_file = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_microk.txt"
+    logger_file = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_ntc.txt"
+    meta_file   = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_meta.txt"
 
     write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description)
     print("Meta file written:", meta_file)
@@ -411,7 +414,7 @@ def main():
         stop_event.set()
         t_micro.join(timeout=15)
         t_logger.join(timeout=15)
-        print("Done. Files are in ./Output/")
+        print(f"Done. Files are in ./{OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":

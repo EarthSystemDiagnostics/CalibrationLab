@@ -11,7 +11,7 @@ Strategy 1 (passive, deterministic):
     chip's burned-in serial number -> stable across replug/reboot. So a role can
     be mapped to a serial-number substring once and matched forever.
         python3 tools/port_detect.py --list            # show every port + USB id
-        python3 tools/port_detect.py --map ../param_combined.txt   # hint -> port
+        python3 tools/port_detect.py --map config/param_combined.txt   # hint -> port
 
 Strategy 2 (active probe):
     Open each port and run a device-specific handshake; classify by what answers.

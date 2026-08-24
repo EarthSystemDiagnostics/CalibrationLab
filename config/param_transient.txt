@@ -1,7 +1,7 @@
 # ============================================================
 #  Transient sweep  -  drive the bath up/down (no dwell) to characterise the
 #  bath + sensor dynamic response and validate token-accurate per-value logging.
-#  Run with:  python3 calibration_auto.py --param param_transient.txt --dashboard
+#  Run with:  python3 calibration_auto.py --param config/param_transient.txt --dashboard
 #
 #  How it works: gate_mode=fixed + plateau_minutes=0 + a tiny stability window ->
 #  the run ramps to each setpoint, counts it as "arrived" and reverses at once, so

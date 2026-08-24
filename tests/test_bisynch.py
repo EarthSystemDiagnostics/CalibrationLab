@@ -100,6 +100,9 @@ _serial.PARITY_EVEN, _serial.PARITY_ODD, _serial.PARITY_NONE = "E", "O", "N"
 _serial.STOPBITS_ONE = 1
 sys.modules["serial"] = _serial
 
+import os as _os, sys as _sys                                   # noqa: E402
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _ROOT)          # repo root: the modules under test
 import bisynch   # noqa: E402
 
 

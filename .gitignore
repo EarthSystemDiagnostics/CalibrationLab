@@ -1,5 +1,6 @@
 # Measurement output (data, not code)
-Output/
+data/
+Output/          # legacy location, pre-2026-08
 
 # macOS
 .DS_Store

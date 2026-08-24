@@ -47,17 +47,17 @@ python3 -m pip install -r requirements.txt
 The exact `/dev/cu.usbserial-*` names can change between sessions — the script
 lets you **pick the port interactively at runtime** (see below). If you are unsure
 which device is on which port, `tools/port_detect.py` lists them and can probe them
-read-only (`--list`, `--map param_combined.txt`, `--probe`) — run it with the
+read-only (`--list`, `--map config/param_combined.txt`, `--probe`) — run it with the
 calibration stopped, one program per port.
 
 ---
 
 ## Usage
 
-Edit **`param_combined.txt`** first (see format below), then run:
+Edit **`config/param_combined.txt`** first (see format below), then run:
 
 ```bash
-python3 calibration_log.py                 # uses param_combined.txt
+python3 calibration_log.py                 # uses config/param_combined.txt
 python3 calibration_log.py --param x.txt    # different config file
 python3 calibration_log.py --exp Testlauf   # override the experiment name
 ```
@@ -100,7 +100,7 @@ Output files can be **copied at any time while logging** — every line is
 
 ---
 
-## Configuration — `param_combined.txt`
+## Configuration — `config/param_combined.txt`
 
 Minimal `key: value` format (order does not matter, `#` starts a comment):
 
@@ -128,7 +128,7 @@ ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 
 ---
 
-## Output — three files per run, in `./Output/` (four with `calibration_auto.py`)
+## Output — three files per run, in `./data/Output/` (four with `calibration_auto.py`)
 
 ```
 <experiment>_<YYYYMMDD-HHMMSS>_microk.txt   # MicroK / SPRT data
@@ -198,7 +198,7 @@ time is the row's `DateTimePC`), in left-to-right order. So value *k*'s absolute
 time is `DateTimePC + TOFFMS[k] ms`. Old 4-field readers ignore the field (the
 `counts` block is unchanged); the R pipeline uses it to pair each count with the
 SPRT **interpolated to that exact instant**, so the common-mode bath oscillation
-cancels instead of aliasing (see `DATA_FORMATS.md`).
+cancels instead of aliasing (see `docs/DATA_FORMATS.md`).
 
 ---
 
@@ -295,7 +295,7 @@ baud/parity, Modbus slave address, and the **value encoding**
 (`bath_encoding: float` vs `int1/int2/int3`). Run `--dry-run` first — if PV/SP
 read back as sensible numbers, the settings are right.
 
-Everything lives in the **single** `param_combined.txt`, grouped into sections:
+Everything lives in the **single** `config/param_combined.txt`, grouped into sections:
 **(1) hardware** — the three serial ports at the very top (they change when a
 USB-serial adapter is re-plugged); **(2) experiment**; **(3) bath controller**;
 **(4) bath schedule & tuning**. Bath-automation keys (ignored by the legacy tool):
@@ -325,14 +325,14 @@ If the coarse settle times out (step-scaled), the run **soaks on the SPRT gate
 anyway**; if the gate never passes within the soak cap, it measures the trailing
 window and **flags** the plateau. It never blocks the whole schedule.
 
-A ready-to-run **24 h schedule** is provided as **`param_24h.txt`** — an 11-point
+A ready-to-run **24 h schedule** is provided as **`config/param_24h.txt`** — an 11-point
 down-sweep with brackets (+5 … −35 in ~4 °C steps, 180 min soak at −35) plus 4
 up-anchors (−25, −15, −5, +3) that re-visit interior temperatures later in time.
 The up-anchors make time orthogonal to temperature (common-mode drift is
 ~+1.5 mK/day), which keeps the fitted coefficients from bending:
 
 ```bash
-python3 calibration_auto.py --param param_24h.txt --dashboard
+python3 calibration_auto.py --param config/param_24h.txt --dashboard
 ```
 
 **Time estimate.** At start (and, in `--dashboard`, continuously) the run prints a
@@ -373,29 +373,29 @@ mnemonics so you can match them against the 3504 front panel before writing.
 ---
 
 
-## Repository contents
+## Repository layout
 
-| File                  | Purpose                                             |
-|-----------------------|-----------------------------------------------------|
-| `calibration_log.py`  | Legacy logger (manual bath setpoints)               |
-| `calibration_auto.py` | Automated logger + bath plateau control             |
-| `bath.py`             | Modbus RTU read-out (over-temp limiter; Series-2000 units) |
-| `bisynch.py`          | EI-Bisynch control of the Eurotherm 3504 (the bath driver) |
-| `gate.py`             | SPRT dT/dt plateau gate (trailing drift/sd stats)   |
-| `sprt.py`             | SPRT ratio → temperature (live display)             |
-| `ntc.py`              | NTC raw counts → temperature (live display)         |
-| `test_bath.py`        | Offline test suite (fake slave, gate, config)       |
-| `test_bisynch.py`     | Offline EI-Bisynch protocol test suite              |
-| `tools/bath_sim.py`   | Modbus-RTU bath simulator (serial-level testing)    |
-| `tools/port_detect.py`| Standalone helper: which device is on which serial port (list / safe probe) |
-| `param_combined.txt`  | Configuration (logging + bath automation)           |
-| `param_24h.txt`       | Ready-to-run 24 h down-sweep + up-anchor schedule   |
-| `param_transient.txt` | Ramp-only sweep (no dwell) for the dynamic response |
-| `DATA_FORMATS.md`     | Output file formats (for the R calibration pipeline)|
-| `HANDOVER.md`         | Übergabe / getting-started for whoever takes the code over |
-| `PID_TUNING.md`       | Notes/plan for reducing the bath overshoot (not wired into the code) |
-| `requirements.txt`    | Python dependencies (`tools/requirements-sim.txt` adds the simulator's) |
-| `TODO.md`             | Known limitations / future work                     |
+```
+calibration_log.py      logger (MicroK + NTC head); also the library the auto tool imports
+calibration_auto.py     automated run: same logging + bath plateau control
+bisynch.py              EI-Bisynch control of the Eurotherm 3504 -- this drives the bath
+bath.py                 Modbus RTU: the over-temp limiter here, the controller on Series-2000 units
+gate.py                 SPRT dT/dt plateau gate (trailing drift/sd statistics)
+sprt.py  ntc.py         ratio/counts -> temperature, live display only
+
+config/                 parameter files -- param_combined.txt (default), param_24h.txt,
+                        param_transient.txt
+docs/                   HANDOVER.md (start here), DATA_FORMATS.md (output formats for R),
+                        PID_TUNING.md (overshoot plan), TODO.md
+tests/                  test_bath.py, test_bisynch.py -- offline, no hardware needed
+tools/                  bath_sim.py (Modbus bath simulator), port_detect.py (which device
+                        is on which port), requirements-sim.txt
+data/Output/            measurement data written by a run (git-ignored)
+```
+
+Run the tools **from the repository root** -- the default parameter path
+(`config/param_combined.txt`) and the output directory (`data/Output/`) are
+relative to it. The test suites may be run from anywhere.
 
 ---
 
