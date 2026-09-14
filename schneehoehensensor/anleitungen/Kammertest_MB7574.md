@@ -27,8 +27,8 @@ python3 schneehoehensensor/skripte/mb7574_kammerlog.py abschliessen
 
 - **`neu`** einmal je Kammertest, und wieder, wenn Sensor oder Ziel neu montiert wurden. Fragt Personen, Seriennummer (fehlt sie: eigene Kennung auf dem Gehäuse, z. B. `MB7574-01`) und Beschreibung ab.
 - **`stufe <Zahl>`** je Temperaturstufe, die Zahl ist die Solltemperatur in °C. Negative Zahlen direkt schreiben (`stufe -40`). Die Stufe landet im neuesten Laufordner; einen anderen mit `--lauf <Ordnername>`.
-- Ablauf einer Stufe: Das Skript piept und sagt „Netzteil EIN“ bzw. „Netzteil AUS“ an: dreimal 20 s ein, dazwischen je 10 s aus. Beim ersten EIN den Strom am Netzteil ablesen. Danach fragt es „Strom während EIN in mA“ (Zahl, Enter) und „Bemerkung“ (Text oder nur Enter) und zeigt die Zusammenfassung.
-- **`--tag <Wort>`** hängt einen Zusatz an den Dateinamen: `tisch`, `60min`, `wdh`, `ende`. Bezug für Median und Strom ist die erste Stufe `stufe 20` **ohne** Tag.
+- Ablauf einer Stufe: Das Skript piept und sagt „Netzteil EIN“ bzw. „Netzteil AUS“ an: dreimal 20 s ein, dazwischen je 10 s aus. Beim ersten EIN den Strom am Netzteil ablesen. Danach fragt es „Strom während EIN in mA“ (Zahl, Enter) und „Bemerkung“ (Text oder nur Enter) und zeigt die Zusammenfassung: Median aller Werte, Median von Zyklus 1 (Kaltstart nach der Haltezeit) und den Anstieg bis zum letzten Zyklus (Eigenerwärmung; die 10-s-Pausen kühlen den Sensor nicht zurück).
+- **`--tag <Wort>`** hängt einen Zusatz an den Dateinamen: `tisch`, `60min`, `wdh`, `ende`. Bezug für den Median von Zyklus 1 und den Strom ist die erste Stufe `stufe 20` **ohne** Tag; kommt sie erst später, rechnet das Skript die Abweichungen der früheren Stufen nach.
 - **`abschliessen`** zweimal: Der erste Aufruf legt `notizen.md` an. Nach dem Ausfüllen checkt der zweite Aufruf den Laufordner nach Rückfrage (`j`) ein und pusht.
 - Eine laufende Stufe bricht Ctrl-C ab; danach mit `--tag wdh` wiederholen. Hilfe: `python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe --help`.
 
@@ -43,9 +43,9 @@ Zwischen den Messungen bleibt der Sensor stromlos: im Dauerbetrieb heizt er sich
 
 ## Ausfall und Auffälligkeiten
 
-Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), ungültige Zeilen, Median mehr als 2 % und Strom mehr als 20 % neben dem Bezug. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
+Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), ungültige Zeilen, Median von Zyklus 1 mehr als 2 % und Strom mehr als 20 % neben dem Bezug. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
 
-Steigt der Median unterhalb −40 °C stetig um etwa 0,2 % je K, misst der Sensor weiter, aber seine interne Temperaturkompensation folgt der Kammer nicht mehr. Das als Bemerkung eingeben und weitermachen.
+Steigt der Median von Zyklus 1 unterhalb −40 °C stetig um etwa 0,2 % je K, misst der Sensor weiter, aber seine interne Temperaturkompensation folgt der Kammer nicht mehr. Das als Bemerkung eingeben und weitermachen.
 
 Bei Ausfall (keine oder unbrauchbare Werte):
 

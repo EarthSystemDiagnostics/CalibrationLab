@@ -4,6 +4,7 @@
     python3 schneehoehensensor/tests/test_kammerlog.py      (takes about 25 s)
 """
 import csv
+import importlib.util
 import os
 import pty
 import re
@@ -17,6 +18,17 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "skripte" / "mb7574_kammerlog.py"
 # Real power-up header of the lab sensor (14.09.2026), with a stray byte in front.
 HEADER = b"\xffSCXL-MaxSonar-WRS\rPN:MB7574\rCopyright 2011-2017\rMaxBotix Inc.\rRoHSv24b 084  0517\rTempI\r"
+
+OLD_COLUMNS = ["start", "soll_C", "tag", "zyklen", "zyklen_mit_daten", "zyklen_mit_kopfzeile",
+               "n_werte", "n_5000", "n_ungueltig", "median_mm", "min_mm", "max_mm",
+               "abw_ref_pct", "strom_mA", "bemerkung", "datei"]
+
+
+def load_logger():
+    spec = importlib.util.spec_from_file_location("kammerlog", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def run(laeufe, *args, stdin=""):
@@ -53,6 +65,38 @@ def test_step_without_run_folder_stops():
     assert r.returncode != 0 and "Erst: mb7574_kammerlog.py neu" in r.stderr, r.stderr
 
 
+def test_old_summary_is_upgraded_from_the_log():
+    # A summary written before median_z1_mm/drift_mm existed gets both from its step log,
+    # and deviations are recomputed once a +20 C reference step arrives.
+    kl = load_logger()
+    lauf = Path(tempfile.mkdtemp(prefix="kammerlog_")) / "kammer_MB7574_20260914-170058"
+    lauf.mkdir()
+    log = f"{lauf.name}_T-20_170147.txt"
+    lines = ["# MB7574 Kammertest", "# zeit\tt_s\tzyklus\tphase\tzeile"]
+    for k, vals in ((1, [982, 981, 979]), (2, [984, 984, 985]), (3, [986, 987, 985])):
+        lines.append(f"x\t0\t{k}\tEIN\t# Ansage Netzteil EIN")
+        lines.append(f"x\t0\t{k}\tEIN\t\x00SCXL-MaxSonar-WRS")
+        lines += [f"x\t0\t{k}\tEIN\tR{v:04d}" for v in vals]
+    (lauf / log).write_text("\n".join(lines) + "\n")
+    summary = lauf / f"{lauf.name}_zusammenfassung.csv"
+    with open(summary, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(OLD_COLUMNS)
+        w.writerow(["2026-09-14T17:01:47", "-20", "", "3", "3", "3", "9", "0", "0", "984", "979", "987",
+                    "", "92", "", log])
+
+    rows = kl.read_summary(summary)
+    assert (rows[0]["median_z1_mm"], rows[0]["drift_mm"]) == ("981", "5"), rows[0]
+
+    new = {k: "" for k in kl.SUMMARY_COLUMNS} | {"soll_C": "20", "median_z1_mm": "990", "datei": "x.txt"}
+    kl.update_summary(summary, new)
+    with open(summary, newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    assert reader.fieldnames == kl.SUMMARY_COLUMNS
+    assert [r["abw_ref_pct"] for r in rows] == ["-0.91", "0.00"], rows
+
+
 def test_new_step_summary_and_close():
     laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
 
@@ -67,15 +111,18 @@ def test_new_step_summary_and_close():
     assert r.returncode == 0, r.stdout + r.stderr
     r = step(laeufe, -40, 830, "90,5\nTest Komma\n")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "Median +2.2 % gegen +20 °C" in r.stdout and "Strom +33 % gegen +20 °C" in r.stdout, r.stdout
+    assert "Zyklus 1 +2.2 % gegen +20 °C" in r.stdout and "Strom +33 % gegen +20 °C" in r.stdout, r.stdout
+    assert "Median Zyklus 1 (Kaltstart) 830 mm, Anstieg bis Zyklus 3: +0 mm" in r.stdout, r.stdout
 
     with open(lauf / f"{lauf.name}_zusammenfassung.csv", newline="") as f:
         rows = list(csv.DictReader(f))
     assert [x["soll_C"] for x in rows] == ["20", "-40"]
+    assert [x["abw_ref_pct"] for x in rows] == ["0.00", "2.22"], rows
     last = rows[1]
     assert (last["zyklen_mit_daten"], last["zyklen_mit_kopfzeile"]) == ("3", "3"), last
     assert (last["n_werte"], last["n_5000"], last["n_ungueltig"]) == ("13", "1", "1"), last
-    assert (last["abw_ref_pct"], last["strom_mA"], last["bemerkung"]) == ("2.22", "90.5", "Test Komma"), last
+    assert (last["median_z1_mm"], last["drift_mm"]) == ("830", "0"), last
+    assert (last["strom_mA"], last["bemerkung"]) == ("90.5", "Test Komma"), last
     assert last["datei"].startswith(f"{lauf.name}_T-40_") and (lauf / last["datei"]).exists()
 
     # abschliessen: first call writes the template, second refuses an unfilled one
