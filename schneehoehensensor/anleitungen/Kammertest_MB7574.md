@@ -10,30 +10,40 @@ Bis zu welcher Kammertemperatur startet der MB7574 und liefert plausible Distanz
 
 - Verdrahtung, Stecklage und Prüfung vor dem Einschalten: `../aufbau/Laboraufbau_MB7574.md`.
 - Sensor starr montiert, Strahl rechtwinklig auf eine ebene Fläche in 0,6–1 m Abstand (Kammerwand, Boden oder Platte). Den Aufbau bis Testende nicht verändern.
+- Abstand Sensor-Stirnfläche bis Zielfläche mit dem Maßband auf 1 mm messen, ins Laborbuch.
 - Netzteil 5,00 V, Strombegrenzung 150 mA.
+
+## Befehle
+
+Terminal öffnen und in den Repo-Ordner wechseln (am Labor-Laptop der Ordner des Klons, z. B. `cd ~/CalibrationLab`). CoolTerm muss geschlossen sein, sonst ist der Port belegt.
+
+```
+python3 schneehoehensensor/skripte/mb7574_kammerlog.py neu
+python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe 20
+python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe -40
+python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe -70 --tag 60min
+python3 schneehoehensensor/skripte/mb7574_kammerlog.py abschliessen
+```
+
+- **`neu`** einmal je Kammertest, und wieder, wenn Sensor oder Ziel neu montiert wurden. Fragt Personen, Seriennummer (fehlt sie: eigene Kennung auf dem Gehäuse, z. B. `MB7574-01`) und Beschreibung ab.
+- **`stufe <Zahl>`** je Temperaturstufe, die Zahl ist die Solltemperatur in °C. Negative Zahlen direkt schreiben (`stufe -40`). Die Stufe landet im neuesten Laufordner; einen anderen mit `--lauf <Ordnername>`.
+- Ablauf einer Stufe: Das Skript piept und sagt „Netzteil EIN“ bzw. „Netzteil AUS“ an: dreimal 20 s ein, dazwischen je 10 s aus. Beim ersten EIN den Strom am Netzteil ablesen. Danach fragt es „Strom während EIN in mA“ (Zahl, Enter) und „Bemerkung“ (Text oder nur Enter) und zeigt die Zusammenfassung.
+- **`--tag <Wort>`** hängt einen Zusatz an den Dateinamen: `tisch`, `60min`, `wdh`, `ende`. Bezug für Median und Strom ist die erste Stufe `stufe 20` **ohne** Tag.
+- **`abschliessen`** zweimal: Der erste Aufruf legt `notizen.md` an. Nach dem Ausfüllen checkt der zweite Aufruf den Laufordner nach Rückfrage (`j`) ein und pusht.
+- Eine laufende Stufe bricht Ctrl-C ab; danach mit `--tag wdh` wiederholen. Hilfe: `python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe --help`.
 
 ## Ablauf
 
 Zwischen den Messungen bleibt der Sensor stromlos: im Dauerbetrieb heizt er sich mit 0,34 W über die Kammertemperatur. Jedes Einschalten ist damit ein Kaltstart.
 
-Alle Befehle im Repo-Ordner. Vor der ersten Stufe:
-
-1. `git pull`
-2. `python3 schneehoehensensor/skripte/mb7574_kammerlog.py neu` fragt Personen, Seriennummer und Beschreibung ab und legt den Laufordner an. Seinen Namen ins Laborbuch.
-3. Tischtest vor dem Einbau: `python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe 20 --tag tisch`
-
-Stufen: +20 °C → −40 → −50 → −60 → −70 → +20 °C. Je Stufe:
-
-1. Solltemperatur erreicht, 30 min halten.
-2. Solltemperatur einsetzen: `python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe -40`
-3. Netzteil nach Ansage schalten, dreimal 20 s EIN, 10 s AUS. Im ersten EIN den Strom am Netzteil ablesen.
-4. Am Ende Strom und Bemerkung eingeben. Das Skript zeigt Zyklen mit Daten und Kopfzeile, Median und die Abweichung zur ersten +20-°C-Stufe, markiert Auffälligkeiten und schreibt Log und Zusammenfassung in den Laufordner.
-
-Läuft bei −70 °C alles, nach weiteren 60 min wiederholen mit `--tag 60min`. Die letzte +20-°C-Stufe mit `--tag ende`.
+1. `git pull`, dann `neu`. Den Namen des Laufordners ins Laborbuch.
+2. Tischtest vor dem Einbau: `stufe 20 --tag tisch`.
+3. Stufen: +20 °C → −40 → −50 → −60 → −70 → +20 °C. Je Stufe Solltemperatur erreicht, 30 min halten, dann `stufe <Solltemperatur>`.
+4. Läuft bei −70 °C alles, nach weiteren 60 min `stufe -70 --tag 60min`. Die letzte Stufe `stufe 20 --tag ende`.
 
 ## Ausfall und Auffälligkeiten
 
-Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), ungültige Zeilen, Median mehr als 2 % und Strom mehr als 20 % neben dem +20-°C-Wert. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
+Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), ungültige Zeilen, Median mehr als 2 % und Strom mehr als 20 % neben dem Bezug. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
 
 Steigt der Median unterhalb −40 °C stetig um etwa 0,2 % je K, misst der Sensor weiter, aber seine interne Temperaturkompensation folgt der Kammer nicht mehr. Das als Bemerkung eingeben und weitermachen.
 
@@ -46,6 +56,5 @@ Bei Ausfall (keine oder unbrauchbare Werte):
 
 ## Abschluss
 
-1. Bei +20 °C nach 30 min `stufe 20 --tag ende`: Werte und Strom wie zu Beginn?
-2. Kammer öffnen, Wandler, Verguss und Kabel ansehen (Wasser, Risse), Foto.
-3. `python3 schneehoehensensor/skripte/mb7574_kammerlog.py abschliessen` legt `notizen.md` an. Ausfüllen, Fotos nach `fotos/` und abfotografierte Laborbuchseiten nach `scans/` im Laufordner, dann erneut `abschliessen`: checkt den Laufordner ein und pusht.
+1. Kammer öffnen, Wandler, Verguss und Kabel ansehen (Wasser, Risse), Fotos.
+2. `abschliessen`, `notizen.md` ausfüllen, Fotos nach `fotos/` und abfotografierte Laborbuchseiten nach `scans/` im Laufordner, erneut `abschliessen`.

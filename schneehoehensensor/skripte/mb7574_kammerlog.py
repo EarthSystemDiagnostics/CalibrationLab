@@ -225,7 +225,10 @@ def cmd_step(a):
             reader.phase = "AUS"
             reader.note(k, "AUS", "# Ansage Netzteil AUS")
             print(f"\aZyklus {k}/{a.zyklen}: Netzteil AUS")
-            countdown(a.aus, "AUS", reader)
+            if k < a.zyklen:
+                countdown(a.aus, "AUS", reader)
+            else:
+                time.sleep(1)       # last cycle: no off-time needed, only catch the final line
         reader.halt.set()
         reader.join()
         current_text = input("\nStrom während EIN in mA (leer = nicht abgelesen): ").strip()
