@@ -34,7 +34,8 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent     # schneehoehensensor/
 RUNS_DIR = PROJECT_DIR / "laeufe"
 EXPERIMENT = "kammer_MB7574"
 
-VALUE = re.compile(r"^R(\d{4})$")
+VALUE = re.compile(r"^R(\d{4})$")                         # distance in mm
+STRAY_BYTES = bytes(range(0, 32)) + bytes(range(127, 256))  # control and non-ASCII bytes
 NO_ECHO = 5000            # R5000 = no target in the beam
 MIN_VALUES_PER_CYCLE = 3
 LIMIT_MEDIAN_PCT = 2.0    # median against the first +20 °C step without tag
@@ -124,10 +125,14 @@ class SensorReader(threading.Thread):
             buf += self.ser.read(64)
             *done, buf = re.split(rb"[\r\n]", buf)
             for raw in filter(None, done):
-                text = raw.decode("ascii", "backslashreplace")
-                self.lines.append((self.cycle, all(32 <= b < 127 for b in raw), text))
-                self.last = text
-                self.note(self.cycle, self.phase, text)
+                self.note(self.cycle, self.phase, raw.decode("ascii", "backslashreplace"))   # log stays raw
+                # Switching the supply leaves stray bytes in front of the next line
+                # (terminal shows '.SCXL-MaxSonar-WRS'); they do not make the line invalid.
+                clean = raw.lstrip(STRAY_BYTES)
+                if clean:
+                    text = clean.decode("ascii", "backslashreplace")
+                    self.lines.append((self.cycle, all(32 <= b < 127 for b in clean), text))
+                    self.last = text
 
 
 def countdown(seconds, label, reader):

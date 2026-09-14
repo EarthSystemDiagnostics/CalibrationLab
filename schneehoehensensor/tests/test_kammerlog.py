@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "skripte" / "mb7574_kammerlog.py"
-HEADER = b"MaxBotix\rMB7574\rCopyright 2005-2020\rRoHS\rTempI\r"
+# Real power-up header of the lab sensor (14.09.2026), with a stray byte in front.
+HEADER = b"\xffSCXL-MaxSonar-WRS\rPN:MB7574\rCopyright 2011-2017\rMaxBotix Inc.\rRoHSv24b 084  0517\rTempI\r"
 
 
 def run(laeufe, *args, stdin=""):
