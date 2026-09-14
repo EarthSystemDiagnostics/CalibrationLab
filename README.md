@@ -9,7 +9,7 @@ Vorgehen bei Labortests: **`SOP_Labortests.md`**.
 | Ordner | Inhalt | Einstieg |
 |---|---|---|
 | `kalibrierung/` | NTC-Kalibrierung gegen SPRT mit Kalibrierbad: Logger, Badsteuerung, R-Auswertung, Läufe, Archiv bis Juli 2026 | `kalibrierung/docs/HANDOVER.md` |
-| `schneehoehensensor/` | Kammertests MaxBotix MB7574 (folgt) | |
+| `schneehoehensensor/` | Kammertests MaxBotix MB7574: Logger, Laboraufbau, Anleitung, Läufe | `schneehoehensensor/README.md` |
 
 ## Einrichten
 
