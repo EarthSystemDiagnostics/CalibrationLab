@@ -1,0 +1,80 @@
+Experiment       : Snowmelt_Retest5Sensors
+Description      : lauftest
+Start (PC time)  : 2026-07-03 16:51:54.250278
+Run stamp        : 20260703-165154
+
+--- Resolved settings ---
+MicroK port      : /dev/cu.usbserial-A922BJHF
+MicroK channels  : Reference=1  SPRT=['2']
+TempHead port    : /dev/cu.usbserial-FT3GCNKB0
+NTC readout      : ['NTC1', 'NTC2', 'TestSB']
+Groups           : 4 sensors/group, 60 measurement points
+Node IDs         : ['88', '89', '90', '91', '92', '93', '94', '96', '97', '98', '99', '29']
+MicroK file      : Output/Snowmelt_Retest5Sensors_20260703-165154_microk.txt
+NTC file         : Output/Snowmelt_Retest5Sensors_20260703-165154_ntc.txt
+
+--- Verbatim copy of the parameter file ---
+# ============================================================
+#  Combined calibration logging  -  parameter file
+#  Format:   key: value          (order does not matter, '#' = comment)
+#  Read by calibration_log.py (MicroK + SchwaRTech/AWI Temperature head).
+# ============================================================
+
+# Experiment name (goes into the output file names)
+experiment: Snowmelt_Retest5Sensors
+
+# ---- MicroK bridge (SPRT reference) ----
+# Channels:   Reference ; SPRT1 [ ; SPRT2 ]
+microk_channels: 1;2
+# Optional port pre-selection (leave empty for no pre-selection)
+microk_port: usbserial-A922BJHF
+
+# ---- SchwaRTech/AWI Temperature head (NTCs) ----
+# What to read out (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+ntc_readout: NTC1;NTC2;TestSB
+# Sensors per group ; measurement points per group
+ntc_groups: 4;60
+# Sensor node IDs
+ntc_nodes: 88;89;90;91;92;93;94;96;97;98;99;29
+# Optional port pre-selection
+ntc_port: usbserial-FT3GCNKB0
+
+# ============================================================
+#  Bath automation  -  ONLY used by calibration_auto.py
+#  (calibration_log.py ignores everything below)
+# ============================================================
+
+# Optional port pre-selection for the Isotech bath controller
+bath_port:         usbserial-FT3GCNKB1
+# Control protocol for the bath's main controller:
+#   bisynch = EI-Bisynch (7E1) -- the Libra 785 Eurotherm 3504 (CONFIRMED here)
+#   modbus  = Modbus RTU (Series-2000 controllers, and the over-temp limiter)
+bath_protocol:     bisynch
+# Device address. Bisynch: GID/UID address (the 3504 answered at 1).
+# Modbus: slave address (the over-temp limiter is at 2).
+bath_address:      1
+# Modbus-ONLY value encoding (ignored for bisynch). VERIFY ONCE on the real unit:
+#   int1   = scaled integer, 1 decimal  (e.g. 2503 -> 250.3 C)
+#   int2   = scaled integer, 2 decimals (0.01 C)
+#   float  = full-resolution IEEE floats (advanced; word order not verified)
+bath_encoding:     int1
+
+# Plateaus in deg C, in run order (1..20 values)
+plateaus:          -14
+
+# Dwell / measurement time in minutes, counted AFTER the bath is stable.
+# One value -> applies to all plateaus.  Or one value per plateau.
+plateau_minutes:   2
+
+# Optional approach ramp in deg C/min. Leave empty for maximum speed (arrival
+# is detected automatically). One value -> all plateaus, or one per plateau.
+ramp_c_per_min:
+
+# Arrival / stability detection
+stability_tol:     0.02        # deg C band around the setpoint
+stability_window:  1          # minutes PV must stay in band before measuring
+# Max wait for stability SCALES with the step size: this many minutes per 10 K
+# the bath has to travel (measured from the current PV). If it is still not
+# stable when the timeout elapses, the run measures anyway and moves on.
+stability_timeout_per_10k: 30  # minutes per 10 K
+stability_timeout_min:     15  # floor in minutes for small/zero steps

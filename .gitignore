@@ -1,6 +1,15 @@
-# Measurement output (data, not code)
-data/
-Output/          # legacy location, pre-2026-08
+# Messdaten liegen je Lauf in <vorhaben>/laeufe/ und werden eingecheckt.
+# Alte Ausgabeorte (vor 2026-09-14), nur dort ignoriert:
+/data/
+/Output/
+/kalibrierung/data/
+
+# Nicht einchecken: Druckfassungen, Rohfotos, Videos
+*.docx
+*.HEIC
+*.heic
+*.mov
+*.MOV
 
 # macOS
 .DS_Store

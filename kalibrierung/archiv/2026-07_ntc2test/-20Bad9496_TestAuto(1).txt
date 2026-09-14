@@ -1,0 +1,46 @@
+
+Time now: 02:03
+next Alarm: 02:13
+
+1925662 | 1926752 | 1929340 || 1925883 | 1929453 | 1923406
+
+Now Measuring for REAL: 
+1929299 | 1927548 | 1930178 || 1926271 | 1929509 | 1923447
+
+Time now: 02:04
+next Alarm: 02:14
+
+
+
+000001020406 || 1931550 | 1929740 | 1932120 || 1928470 | 1931400 | 1925586
+
+Now Measuring for REAL: 
+000001020410 >> 949370650 || 1931719 | 1929604 | 1932304 || 1928385 | 1931547 | 1925666
+
+> > > NO SD CARD present, please insert!! < < <
+ proceeding anyway... (IRIDIUM transmit possible)
+
+
+
+
+POWER DOWN
+
+
+> > > NO SD CARD present, please insert!! < < <
+ proceeding anyway... (IRIDIUM transmit possible)
+
+
+
+
+___________________________
+Woke up by RTC-Alarm
+
+automatic measurement will be done...
+
+
+
+ Measurement WITHOUT IRIDIUM-transmit (just storing on MicroSDcard)...
+ IridiumTransmit-Counter: 0 / 0
+
+Time now: 02:14
+next Alarm: 02:2

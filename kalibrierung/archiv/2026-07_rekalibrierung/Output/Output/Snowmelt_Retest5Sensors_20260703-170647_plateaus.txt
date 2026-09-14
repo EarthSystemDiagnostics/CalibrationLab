@@ -1,0 +1,4 @@
+# Plateau schedule for automated calibration run
+# stability: tol=0.1 C, window=1.0 min, timeout=30.0 min/10K (floor 15.0 min)
+# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; t_dwell_start; t_dwell_end; stable_ok
+1; -35.0; off; 2026-07-03 17:06:49.907034; 2026-07-03 17:07:55.200999; 2026-07-03 17:07:55.201055; 2026-07-03 17:09:55.611555; True

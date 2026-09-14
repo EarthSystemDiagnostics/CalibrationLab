@@ -349,6 +349,24 @@ def test_config_parser_allows_more_than_20(tmp="/tmp/_test_param_many.txt"):
     assert len(b["minutes"]) == 30 and len(b["ramps"]) == 30   # expanded to match
 
 
+def test_paths_hang_off_the_code_folder(tmp="/tmp/_test_laeufe"):
+    # Default param file and run folders resolve relative to the code folder, not the cwd.
+    import calibration_log as cl
+    assert cl.DEFAULT_PARAM == _os.path.join(_ROOT, "config", "param_combined.txt")
+    assert _os.path.exists(cl.resolve_param("config/param_combined.txt"))
+    assert cl.resolve_param("does/not/exist.txt") == "does/not/exist.txt"
+    old = cl.OUTPUT_DIR
+    try:
+        cl.OUTPUT_DIR = tmp
+        d = cl.run_dir("Exp", "20260914-120000")
+        assert d == _os.path.join(tmp, "Exp_20260914-120000") and _os.path.isdir(d)
+    finally:
+        cl.OUTPUT_DIR = old
+    commit, dirty = cl.git_state()
+    assert commit == "unknown" or len(commit) == 40
+    assert dirty in ("yes", "no", "unknown")
+
+
 def test_sprt_anchor_points():
     assert abs(sprt.ratio_to_temp_c(0.254210687, "Channel2") - 0.01) < 1e-3
     assert abs(sprt.ratio_to_temp_c(0.214602392, "Channel2") - (-38.8344)) < 1e-3

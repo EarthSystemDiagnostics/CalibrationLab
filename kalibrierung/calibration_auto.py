@@ -43,7 +43,8 @@ from datetime import datetime, timedelta
 
 # Reuse the legacy logging machinery unchanged.
 from calibration_log import (
-    read_config, pick_port, microk_worker, logger_worker, write_meta, OUTPUT_DIR,
+    read_config, pick_port, microk_worker, logger_worker, write_meta,
+    DEFAULT_PARAM, resolve_param, run_dir,
 )
 from bath import Bath
 from bisynch import BisynchBath
@@ -628,7 +629,7 @@ def gate_plateau(bath, microk_file, gate_channel, g, min_soak_min, max_soak_min,
 # --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Automated bath-driven calibration run")
-    ap.add_argument("--param", default="config/param_combined.txt", help="path to the parameter file")
+    ap.add_argument("--param", default=DEFAULT_PARAM, help="path to the parameter file")
     ap.add_argument("--exp", default=None, help="override the experiment name")
     ap.add_argument("--dry-run", action="store_true",
                     help="connect and read the bath but never change its setpoint")
@@ -636,6 +637,7 @@ def main():
                     help="show a fixed, in-place overview panel instead of scrolling "
                          "log lines (loggers still write their files)")
     args = ap.parse_args()
+    args.param = resolve_param(args.param)
 
     c = read_config(args.param, exp_override=args.exp)
     b = read_bath_config(args.param)
@@ -680,12 +682,12 @@ def main():
     print("Selected  Bath     ->", bath_port)
 
     # File names (same convention as calibration_log.py, plus a plateau file).
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     run_stamp    = time.strftime("%Y%m%d-%H%M%S")
-    microk_file  = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_microk.txt"
-    logger_file  = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_ntc.txt"
-    meta_file    = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_meta.txt"
-    plateau_file = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_plateaus.txt"
+    out          = run_dir(c["exp"], run_stamp)
+    microk_file  = f"{out}/{c['exp']}_{run_stamp}_microk.txt"
+    logger_file  = f"{out}/{c['exp']}_{run_stamp}_ntc.txt"
+    meta_file    = f"{out}/{c['exp']}_{run_stamp}_meta.txt"
+    plateau_file = f"{out}/{c['exp']}_{run_stamp}_plateaus.txt"
 
     write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file,
                run_stamp, description)
@@ -890,7 +892,7 @@ def main():
         t_micro.join(timeout=15)
         t_logger.join(timeout=15)
         pf.close()
-        print(f"Done. Files are in ./{OUTPUT_DIR}/  (bath left at its last setpoint).")
+        print(f"Done. Files are in {out}/  (bath left at its last setpoint).")
 
 
 if __name__ == "__main__":

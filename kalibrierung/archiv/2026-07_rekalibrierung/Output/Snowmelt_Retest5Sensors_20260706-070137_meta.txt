@@ -1,0 +1,115 @@
+Experiment       : Snowmelt_Retest5Sensors
+Description      : Extesnsion of 5 sensor calib and test of new gating strategy
+Start (PC time)  : 2026-07-06 07:01:37.469464
+Run stamp        : 20260706-070137
+
+--- Resolved settings ---
+MicroK port      : /dev/cu.usbserial-A922BJHF
+MicroK channels  : Reference=1  SPRT=['2']
+TempHead port    : /dev/cu.usbserial-FT3GCNKB0
+NTC readout      : ['NTC1', 'NTC2', 'TestSB']
+Groups           : 4 sensors/group, 60 measurement points
+Node IDs         : ['88', '89', '90', '91', '92', '93', '94', '96', '97', '98', '99', '29']
+MicroK file      : Output/Snowmelt_Retest5Sensors_20260706-070137_microk.txt
+NTC file         : Output/Snowmelt_Retest5Sensors_20260706-070137_ntc.txt
+
+--- Verbatim copy of the parameter file ---
+# ============================================================
+#  Calibration  -  single parameter file
+#  Format:   key: value          (order does not matter, '#' = comment,
+#            ';' separates list values).  Read by calibration_log.py (logging)
+#            and calibration_auto.py (logging + bath control).
+# ============================================================
+
+# ============================================================
+#  1) HARDWARE  -  serial ports
+#  These can change whenever a USB-serial adapter is re-plugged, so keep them
+#  handy at the top. The value is a substring hint; at start you still pick the
+#  port from the detected list (Enter accepts the matching one).
+# ============================================================
+microk_port: usbserial-A922BJHF      # MicroK bridge (SPRT reference)
+ntc_port:    usbserial-FT3GCNKB0     # SchwaRTech/AWI temperature head (NTCs)
+bath_port:   usbserial-FT3GCNKB1     # Isotech bath controller (Eurotherm 3504)
+
+# ============================================================
+#  2) EXPERIMENT  -  what is being measured this run
+# ============================================================
+# Experiment name (goes into the output file names)
+experiment: Snowmelt_Retest5Sensors
+
+# MicroK channels:   Reference ; SPRT1 [ ; SPRT2 ]
+microk_channels: 1;2
+
+# NTC head readout (choose from: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+ntc_readout: NTC1;NTC2;TestSB
+# Sensors per group ; measurement points per group
+ntc_groups: 4;60
+# Sensor node IDs
+ntc_nodes: 88;89;90;91;92;93;94;96;97;98;99;29
+
+# ============================================================
+#  3) BATH CONTROLLER  -  how to talk to the bath (fixed for the Libra 785)
+#  ONLY used by calibration_auto.py (calibration_log.py ignores it).
+# ============================================================
+# Protocol:  bisynch = EI-Bisynch (7E1) -> the Libra 785 Eurotherm 3504
+#            modbus  = Modbus RTU (Series-2000 controllers, over-temp limiter)
+bath_protocol: bisynch
+# Device address:  Bisynch GID/UID (the 3504 answered at 1) / Modbus slave
+bath_address:  1
+# Modbus-ONLY value encoding (ignored for bisynch): float | int1 | int2 | int3
+bath_encoding: int1
+
+# ============================================================
+#  4) BATH SCHEDULE & TUNING
+# ============================================================
+# Plateaus in deg C, in run order (1..100 values)
+plateaus:        -5; 0; 2; 
+
+# In drift mode (default) this is the MINIMUM soak per plateau before the SPRT
+# gate may accept; in fixed mode it is the exact dwell after the bath is stable.
+# One value -> applies to all plateaus.  Or one value per plateau.
+plateau_minutes: 30
+
+# Approach ramp in deg C/min. The Libra 785 slews only ~2 C/min and overshoots at
+# full power, so the limit only bites below ~2 (overshoot ~= dead_time x rate;
+# 1 -> ~1 C). Empty -> max speed. One value -> all plateaus, or one per plateau.
+ramp_c_per_min: 1
+
+# --- Coarse arrival detection (bath PV) ---
+# Gets the bath into the setpoint band before the real (SPRT) gate takes over.
+# The bath PV fluctuates ~+/-0.03 C and only reads to 0.01 C, so this is coarse.
+stability_tol:              0.08   # deg C band around the setpoint
+stability_window:          5      # minutes PV must stay in band before soaking
+# Max wait for arrival SCALES with the step: minutes per 10 K of travel. If the
+# bath is still not in band at the timeout, we soak on the SPRT gate anyway.
+stability_timeout_per_10k: 30      # minutes per 10 K
+stability_timeout_min:     15      # floor (minutes) for small/zero steps
+
+# --- Plateau gate: when is the plateau actually "done"? ---
+# drift (default) = end each plateau when the SPRT REFERENCE stops moving, not on
+#                   a fixed clock. Slow creep (a few mK / 30 min) is harmless; a
+#                   live dT/dt is not. Gated on the MicroK SPRT (sub-mK), because
+#                   the bath PV (10 mK) cannot see a 3 mK drift.
+# fixed          = legacy behaviour: dwell exactly plateau_minutes.
+gate_mode:        drift
+gate_drift_mk:    3     # accept when |drift over the window| < this (mK)
+gate_sd_mk:       8     # AND the scatter about the fit line < this (mK)
+gate_window_min:  30    # trailing window used for drift+sd AND for the average
+gate_poll_s:      30    # how often the gate re-checks the SPRT log
+# Hard cap per plateau = its min soak (plateau_minutes) + this, so a plateau whose
+# reference never settles still ends (and is flagged), instead of blocking forever.
+gate_max_extra_min: 120
+# gate_channel:   Channel2   # which SPRT to gate on; default = first SPRT channel
+
+--- Bath automation ---
+Bath port        : /dev/cu.usbserial-FT3GCNKB1
+Bath protocol    : bisynch
+Bath address     : 1
+Plateaus (C)     : [-5.0, 0.0, 2.0]
+Min soak (min)   : [30.0, 30.0, 30.0]
+Ramps (C/min)    : [1.0, 1.0, 1.0]
+Coarse settle    : tol=0.08 C, window=5.0 min, timeout=30.0 min/10K (floor 15.0 min)
+Gate mode        : drift
+Gate criteria    : |drift|<3 mK & sd<8 mK over 30 min on Channel2
+Gate soak        : min = plateau_minutes, cap = min + 120 min, poll 30 s
+Plateau file     : Output/Snowmelt_Retest5Sensors_20260706-070137_plateaus.txt

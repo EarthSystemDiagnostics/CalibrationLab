@@ -47,12 +47,13 @@ unverändert und legt nur die Badsteuerung darüber.
 
 ## 3. Wo was liegt
 
-Seit dem 24.08.2026 ist der Ordner sortiert: die Python-Module liegen oben,
-darunter `config/` (Param-Dateien), `docs/` (diese Datei, `DATA_FORMATS.md`,
-`PID_TUNING.md`, `TODO.md`), `tests/`, `tools/` und `data/Output/` für die
-Messdaten (nicht in git). **Aufgerufen wird aus der Wurzel** — der Vorgabepfad
-`config/param_combined.txt` und das Ausgabeverzeichnis `data/Output/` sind
-relativ dazu. Die Testsuiten laufen von überall.
+Seit dem 14.09.2026 ist das Repo das Labor-Repo, der Kalibrier-Code liegt unter
+`kalibrierung/`: die Python-Module oben, darunter `config/` (Param-Dateien), `docs/`
+(diese Datei, `DATA_FORMATS.md`, `PID_TUNING.md`, `TODO.md`), `tests/`, `tools/`,
+`auswertung/lib/` (R-Funktionen), `archiv/` (Kampagnen bis Juli 2026) und `laeufe/`,
+ein Ordner je Lauf, **eingecheckt**. Vorgabepfade hängen am Ordner `kalibrierung/`,
+die Werkzeuge laufen also von überall; die Beispiele unten gehen von `kalibrierung/`
+als Arbeitsverzeichnis aus. Die Testsuiten laufen von überall.
 
 ---
 
@@ -75,9 +76,9 @@ python3 tools/port_detect.py --list             # welcher Adapter ist wo?
    **Freitext-Beschreibung** eingeben — die landet im `_meta.txt`.
 4. **Laufen lassen.** Abbruch mit `Ctrl-C`: die Logger schließen sauber, das Bad
    bleibt auf seinem letzten Setpoint stehen (es wird nicht zurückgefahren).
-5. Ausgabedateien liegen in `./data/Output/`, ein Satz pro Lauf mit gemeinsamem
+5. Ausgabedateien liegen in `laeufe/<experiment>_<Zeitstempel>/`, ein Satz pro Lauf mit gemeinsamem
    Zeitstempel im Namen. Sie dürfen **während** des Laufs kopiert werden, jede
-   Zeile ist sofort auf Platte.
+   Zeile ist sofort auf Platte. Nach dem Lauf den Laufordner einchecken.
 
 Nur das Bad ansteuern, ohne Logging: `bath.py` (Modbus) bzw. `bisynch.py`
 (EI-Bisynch) haben eigene CLIs — siehe README.
@@ -183,7 +184,7 @@ Wert zurück und meldet, wenn der Regler ihn nicht angenommen hat.
 
 `DATA_FORMATS.md` ist die maßgebliche Beschreibung der vier Ausgabedateien
 (`_microk`, `_ntc`, `_meta`, `_plateaus`) inklusive Lese-Rezept. Zwei Punkte für
-die bestehenden R-Reader in `../CalibrationChains/lib/`:
+die R-Reader in `auswertung/lib/`:
 
 - **Neue Dateien** (ab 07.07.2026) haben genau einen Header in Zeile 1 —
   `read_logger_2026()` liegt damit richtig, keine Änderung nötig.

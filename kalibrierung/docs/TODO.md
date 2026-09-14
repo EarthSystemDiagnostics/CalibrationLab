@@ -12,7 +12,7 @@ it is wired into the calibration code — start with a read-only `--read XP/TI/T
 
 Since that commit all nodes are read as **one** array, so every file has a single
 header on line 1 and the R reader `read_ntc_head_file()` / `read_logger_2026()`
-(sibling repo `../CalibrationChains/lib/`) is correct as it stands.
+(`auswertung/lib/`) is correct as it stands.
 
 Older files were multiplexed into `Group1…GroupN`, each with its own repeated
 header. Those readers take the column names **only from the first line** and keep
@@ -37,7 +37,7 @@ consumption recipe".
   recent runs all used one SPRT — check it once before relying on it.
 - `sprt.py` carries the **H1-2025** fixed-point ratios for both SPRTs (display only).
   After a recalibration they must be updated in step with
-  `CalibrationChains/lib/SPRTRtoT_NTCtoR.R`.
+  `auswertung/lib/SPRTRtoT_NTCtoR.R`.
 - The Modbus path (`bath_protocol: modbus`, `bath.py`) is only exercised against
   `tools/bath_sim.py` and the Libra's over-temp limiter, not against a Series-2000
   controller in this lab.

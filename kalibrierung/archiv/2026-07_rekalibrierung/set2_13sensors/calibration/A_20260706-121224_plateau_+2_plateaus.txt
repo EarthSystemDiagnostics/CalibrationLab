@@ -1,0 +1,7 @@
+# Plateau schedule for automated calibration run
+# gate_mode: drift
+# coarse settle: tol=0.1 C, window=10.0 min, timeout=30.0 min/10K (floor 15.0 min)
+# drift gate: |drift|<3 mK and sd<8 mK over the trailing 30 min on Channel2; min soak = plateau_minutes, cap = min soak + 90 min
+# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; t_dwell_start; t_dwell_end; gate_ok; drift_mK; sd_mK; n
+# [t_dwell_start, t_dwell_end] is the accepted trailing average window; average the reference/DUT over it. Row is written when the gate ACCEPTS (end of soak); an interrupted soak leaves no row -- recover from raw logs.
+1; 2.0; 1.0; 2026-07-06 12:12:27.862536; 2026-07-06 12:27:35.387769; 2026-07-06 12:50:51.071260; 2026-07-06 13:20:51.071260; True; 1.55; 5.57; 496

@@ -1,0 +1,5 @@
+# Plateau schedule for automated calibration run
+# gate_mode: fixed
+# coarse settle: tol=0.3 C, window=0.1 min, timeout=60.0 min/10K (floor 30.0 min)
+# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; t_dwell_start; t_dwell_end; stable_ok
+# each row is written when its dwell STARTS (survives Ctrl-C); t_dwell_end is the planned end = t_dwell_start + dwell.

@@ -128,7 +128,7 @@ ntc_port: usbserial-FT3GCNKB0            # optional port pre-selection
 
 ---
 
-## Output — three files per run, in `./data/Output/` (four with `calibration_auto.py`)
+## Output — three files per run, in `laeufe/<experiment>_<YYYYMMDD-HHMMSS>/` (four with `calibration_auto.py`)
 
 ```
 <experiment>_<YYYYMMDD-HHMMSS>_microk.txt   # MicroK / SPRT data
@@ -373,7 +373,7 @@ mnemonics so you can match them against the 3504 front panel before writing.
 ---
 
 
-## Repository layout
+## Folder layout — `kalibrierung/`
 
 ```
 calibration_log.py      logger (MicroK + NTC head); also the library the auto tool imports
@@ -390,12 +390,16 @@ docs/                   HANDOVER.md (start here), DATA_FORMATS.md (output format
 tests/                  test_bath.py, test_bisynch.py -- offline, no hardware needed
 tools/                  bath_sim.py (Modbus bath simulator), port_detect.py (which device
                         is on which port), requirements-sim.txt
-data/Output/            measurement data written by a run (git-ignored)
+auswertung/lib/         R functions of the calibration pipeline (counts -> R -> T, plateaus, matching)
+archiv/                 campaigns up to July 2026, copied unchanged, see archiv/README.md
+laeufe/                 one folder per run, <experiment>_<YYYYMMDD-HHMMSS>/, checked into git
 ```
 
-Run the tools **from the repository root** -- the default parameter path
-(`config/param_combined.txt`) and the output directory (`data/Output/`) are
-relative to it. The test suites may be run from anywhere.
+Paths hang off this folder: the default parameter file (`config/param_combined.txt`)
+and the run folders (`laeufe/`) resolve relative to `kalibrierung/`, so the tools run
+from any working directory. A relative `--param` is looked up from the working
+directory first, then from `kalibrierung/`. The examples assume `kalibrierung/` as
+working directory; the test suites may be run from anywhere.
 
 ---
 

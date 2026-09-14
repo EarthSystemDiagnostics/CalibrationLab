@@ -3,7 +3,7 @@
 """
 NTC raw ADC counts -> resistance -> temperature, for live display only.
 
-counts -> resistance is ported from CalibrationChains/lib/SPRTRtoT_NTCtoR.R
+counts -> resistance is ported from auswertung/lib/SPRTRtoT_NTCtoR.R
 (NTCcounts2R). resistance -> temperature uses the universal MEAN lab calibration
 (a 4-parameter Steinhart-Hart curve, NTC_MEAN_COEF below), NOT a per-sensor fit:
 it is the mean of the 62 healthy GRIP sensors and represents every healthy sensor

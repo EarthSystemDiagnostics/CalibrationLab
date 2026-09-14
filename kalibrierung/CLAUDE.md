@@ -8,7 +8,7 @@ Two serial instruments are logged in parallel for NTC calibration against an
 SPRT: the **Isotech MicroK** bridge (SPRT reference) and the **SchwaRTech/AWI
 temperature head** (NTCs). `calibration_auto.py` additionally drives the
 **Isotech Libra 785** bath through a plateau schedule. The calibration fit
-itself happens later in R (`../CalibrationChains`), not here.
+itself happens later in R (`auswertung/lib/`), not in the Python tools.
 
 ## Hardware facts that cost time to rediscover
 - The **Libra 785 carries two controllers on one serial line**: the Eurotherm
@@ -40,6 +40,11 @@ itself happens later in R (`../CalibrationChains`), not here.
   `python3 tests/test_bisynch.py` (fake serial + simulator). Run both before
   committing; add cases when touching gate, config parsing or row parsing.
 - One program per serial port at a time.
+- **Every run writes one folder `laeufe/<experiment>_<YYYYMMDD-HHMMSS>/`**, checked
+  into git after the run. Raw files in it are never edited afterwards; corrections
+  go into a `notizen.md` next to them.
+- Paths hang off this folder (`BASE_DIR` in `calibration_log.py`), so the tools run
+  from any working directory.
 
 ## Where things are documented
 | Question | File |
@@ -50,3 +55,4 @@ itself happens later in R (`../CalibrationChains`), not here.
 | How do I talk to the bath, which commands exist? | `docs/HANDOVER.md` §6, `bisynch.py` header |
 | How would we fix the overshoot properly? | `docs/PID_TUNING.md` |
 | What is still open? | `docs/TODO.md` |
+| Where are the R functions and the old campaigns? | `auswertung/lib/`, `archiv/README.md` |

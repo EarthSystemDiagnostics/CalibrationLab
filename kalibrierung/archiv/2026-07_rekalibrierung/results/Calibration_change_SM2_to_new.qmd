@@ -1,0 +1,171 @@
+---
+title: "Kalibrationsänderung: SM2 → Neukalibrationen 2026 (Satz 1 & 2)"
+author: "Thomas Laepple"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+    code-fold: true
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+source("/Users/tlaepple/sharedAI/CalibrationRegistry/R/calib_registry.R")
+NEWEV <- c("2026-07-06_set1", "2026-07-07_set2")
+TEMPS <- c(0, -10, -20, -30)
+cf <- function(row) setNames(as.numeric(row[c("a","b","c","d")]), c("a","b","c","d"))
+r <- read_registry()
+
+## newest usable NEW calibration per sensor (N98 is in both sets -> take latest)
+newr <- r[r$cal_id %in% NEWEV & r$status %in% c("active","suspect"), ]
+newr <- do.call(rbind, lapply(split(newr, newr$sensor),
+          function(d) d[order(as.Date(d$cal_date)), ][nrow(d), ]))
+old <- r[r$cal_id == "SM2", ]
+
+## delta(T) = T_new - T_SM2 at a fixed resistance = how much the recalibration shifts the
+## reported temperature at each true temperature. Positive = new reads WARMER (SM2 under-read).
+rows <- list(); k <- 0
+for (i in seq_len(nrow(newr))) {
+  sn <- newr$sensor[i]; om <- old[old$sensor == sn, ]; if (!nrow(om)) next
+  cn <- cf(newr[i, ]); co <- cf(om[1, ])
+  d <- sapply(TEMPS, function(T) {
+    R <- tryCatch(R_at_T(T, cn, c(1e3, 5e6)), error = function(e) NA)
+    if (is.na(R)) NA else (T - predict_T(R, co)) * 1000
+  })
+  k <- k + 1
+  rows[[k]] <- data.frame(sensor = sn, node = newr$node[i],
+    set = ifelse(newr$cal_id[i] == NEWEV[1], "set1", "set2"),
+    status = newr$status[i], d0 = d[1], d_10 = d[2], d_20 = d[3], d_30 = d[4])
+}
+D <- do.call(rbind, rows)
+D <- D[order(D$set, as.integer(sub("N","",D$node)), D$sensor), ]
+setcol <- c(set1 = "#1b9e77", set2 = "#d95f02")
+```
+
+## Was das ist
+
+Vergleich der **alten** Kalibration (`SM2`, 15.06.2026, Nora Hirsch) mit den **neuen**
+zeit-gematchten Kalibrationen (`Satz 1` 06.07., `Satz 2` 07.07.). Gezeigt wird
+**ΔT = T_neu − T_SM2** bei denselben Widerstandswerten, ausgewertet bei **0, −10, −20, −30 °C** —
+also *wie stark sich die berichtete Temperatur pro Sensor durch die Neukalibration ändert*.
+Positiv = die neue Kalibration liest **wärmer** (SM2 hatte zu kalt gelesen).
+
+## Zusammenfassung pro Temperatur
+
+```{r summary}
+tab <- data.frame(
+  Temp_C = TEMPS,
+  median_mK = sapply(c("d0","d_10","d_20","d_30"), function(n) round(median(D[[n]], na.rm=TRUE),1)),
+  mean_mK   = sapply(c("d0","d_10","d_20","d_30"), function(n) round(mean(D[[n]], na.rm=TRUE),1)),
+  min_mK    = sapply(c("d0","d_10","d_20","d_30"), function(n) round(min(D[[n]], na.rm=TRUE),1)),
+  max_mK    = sapply(c("d0","d_10","d_20","d_30"), function(n) round(max(D[[n]], na.rm=TRUE),1)),
+  n_gt20mK  = sapply(c("d0","d_10","d_20","d_30"), function(n) sum(abs(D[[n]])>20, na.rm=TRUE)))
+knitr::kable(tab, row.names = FALSE,
+  caption = "ΔT = T_neu − T_SM2 (mK). Der gemeinsame ~+10 mK-Versatz bei 0 °C schrumpft zur Kälte; die Streuung (min/max) wächst zur Kälte durch einzelne SM2-Kurvenfehler.")
+```
+
+Kernbefund:
+
+- **Gemeinsamer Versatz ~+10 mK bei 0 °C** über fast alle Sensoren (SM2 las am warmen Ende
+  systematisch zu kalt) — der Großteil der Korrektur.
+- **Eine Minderheit von Kanälen** (v. a. `TestSB` + einige `NTC1`) hatte **große, zur Kälte
+  wachsende SM2-Kurvenfehler**, bis **~+90 mK bei −30 °C**.
+
+## Grafik 1 — ΔT über die Temperatur (alle Kanäle)
+
+```{r fan, fig.cap="Jede Linie = ein NTC-Kanal. Gut kalibrierte Kanäle laufen zur Kälte zusammen (~+5 mK); die Ausreißer fächern nach oben auf."}
+par(mar=c(4.4,4.4,1,1))
+yl <- range(c(D$d0,D$d_10,D$d_20,D$d_30), na.rm=TRUE)*1.05
+plot(NA, xlim=c(-31,1), ylim=yl, xlab="Temperatur (°C)", ylab="ΔT = T_neu − T_SM2  (mK)")
+abline(h=0, lty=2, col="grey60")
+for (i in seq_len(nrow(D))) {
+  y <- as.numeric(D[i,c("d0","d_10","d_20","d_30")])
+  big <- max(abs(y),na.rm=TRUE) > 30
+  lines(TEMPS, y, col=setcol[D$set[i]], lwd=if(big)2.2 else 0.8)
+  if (big) text(-30, y[4], D$sensor[i], pos=2, cex=.55, col=setcol[D$set[i]])
+}
+legend("topleft", c("Satz 1","Satz 2"), col=setcol, lwd=2, bty="n")
+```
+
+## Grafik 2 — Verteilung bei jeder Temperatur
+
+```{r box, fig.height=4.5, fig.cap="Median ~+10 mK bei 0 °C, zur Kälte kleiner werdend; die Ausreißer-Schwänze (einzelne Kanäle) wachsen zur Kälte."}
+par(mar=c(4.4,4.4,1,1))
+boxplot(list(`0`=D$d0, `-10`=D$d_10, `-20`=D$d_20, `-30`=D$d_30),
+  ylab="ΔT = T_neu − T_SM2 (mK)", xlab="Temperatur (°C)", col="grey90", outpch=16, outcex=.6)
+abline(h=0, lty=2, col="grey60")
+```
+
+## Grafik 3 — Größte Korrekturen bei −30 °C
+
+```{r top, fig.height=5, fig.cap="Top-Kanäle nach |ΔT| bei −30 °C — hier war SM2 am stärksten falsch."}
+top <- head(D[order(-abs(D$d_30)), ], 12)
+par(mar=c(4.4,7,1,1))
+barplot(rev(top$d_30), horiz=TRUE, names.arg=rev(top$sensor), las=1, cex.names=.7,
+  col=rev(setcol[top$set]), xlab="ΔT bei −30 °C (mK)"); abline(v=0)
+```
+
+```{r toptab}
+knitr::kable(top[,c("sensor","set","status","d0","d_10","d_20","d_30")], row.names=FALSE,
+  digits=1, caption="Kanäle mit den größten SM2-Kurvenfehlern (ΔT in mK).")
+```
+
+## Zwischenchecks: N94 & N96 haben einen dritten (und vierten) Punkt
+
+Für **N94** und **N96** existieren unabhängige Zwischenmessungen als Residuum-zu-SM2:
+`ntc2test` (**01.07., −20 °C**) und `recalib2sensors` (**03.07., −14 °C**). Damit lässt sich die
+Trajektorie **SM2 (15.06.) → 01.07. → 03.07. → Satz 1 (06.07.)** zeichnen und unterscheiden, ob
+eine Abweichung ein **stabiler SM2-Kurvenfehler** oder eine **Drift** ist.
+
+```{r inter, fig.cap="Abweichung von SM2 über die Zeit bei ~−20 °C. Flach = stabiler SM2-Kurvenfehler; steigend = Drift. NTC3 = TestSB."}
+rep <- read.csv("/Users/tlaepple/sharedAI/CalibrationChains/recalib2sensors/Repro_vs_ntc2test.csv",
+                stringsAsFactors=FALSE)
+rep$sensor <- sub("NTC3","TestSB", rep$NTC)
+## delta(new - SM2) = -(SM2 bias). ntc2test @ -20, recalib2sensors @ -14.
+rep$t01 <- -rep$bias_m20_ntc2test      # 2026-07-01 @ -20 C
+rep$t03 <- -rep$bias_m14_mK            # 2026-07-03 @ -14 C
+dt <- as.Date(c("2026-06-15","2026-07-01","2026-07-03","2026-07-06"))
+par(mar=c(4.4,4.4,1,1))
+sens <- rep$sensor; cols <- rainbow(length(sens))
+plot(NA, xlim=range(dt), ylim=range(c(0,rep$t01,rep$t03,40,-5)), xlab="Datum",
+     ylab="ΔT = T_neu − T_SM2 bei ~−20 °C (mK)")
+abline(h=0, lty=2, col="grey60")
+for (i in seq_along(sens)) {
+  d20_set1 <- D$d_20[D$sensor==sens[i]]                     # set1 @ -20
+  y <- c(0, rep$t01[i], rep$t03[i], if(length(d20_set1)) d20_set1 else NA)
+  lines(dt, y, col=cols[i], lwd=2); points(dt, y, col=cols[i], pch=16)
+}
+legend("topleft", sens, col=cols, lwd=2, cex=.6, bty="n", ncol=2)
+text(dt, par("usr")[3], c("SM2","−20","−14","Satz1"), pos=3, cex=.6, col="grey40")
+```
+
+```{r intertab}
+it <- data.frame(sensor=rep$sensor,
+  SM2=0, chk_0701_m20=round(rep$t01,1), chk_0703_m14=round(rep$t03,1),
+  set1_m20=round(sapply(rep$sensor,function(s){v<-D$d_20[D$sensor==s]; if(length(v))v else NA}),1))
+knitr::kable(it, row.names=FALSE, caption="N94/N96: ΔT (T_neu − T_SM2) über die Zeit. Alle N94-Kanäle und N96_NTC1/2 liegen stabil um 0; N96_TestSB liegt konstant bei ~+25…+35 mK → das ist ein STABILER SM2-Kurvenfehler, keine Drift.")
+```
+
+**Schluss aus den Zwischenchecks:** N96_TestSB weicht seit dem 1. Juli konstant um **~+25…+35 mK**
+von SM2 ab (unabhängig gemessen an drei Terminen) — also ein **stabiler SM2-Kalibrierfehler**,
+keine sich entwickelnde Sensordrift. Alle N94-Kanäle und N96_NTC1/NTC2 sind über die Zeit stabil
+nahe SM2. (Kontrast: N26 in Satz 2 driftet *innerhalb* des Laufs → dort ist es echte Instabilität,
+siehe `N26_drift.pdf`.)
+
+## Vollständige Tabelle
+
+```{r full}
+knitr::kable(D[,c("sensor","set","status","d0","d_10","d_20","d_30")], row.names=FALSE, digits=1,
+  caption="ΔT = T_neu − T_SM2 (mK) je Kanal bei 0/−10/−20/−30 °C.")
+```
+
+## Hinweise
+
+- ΔT ist bezogen auf die **neue** Kalibration als Referenz (wir vertrauen der zeit-gematchten
+  Neukalibration, U=2u ~1.8 mK Satz 1 / ~2.7 mK Satz 2).
+- `SM2` (15.06.) ist das gemeinsame Alt-Referenzdatum; Operator Nora Hirsch.
+- N98 ist in beiden neuen Sätzen; hier zählt die aktive Satz-2-Kalibration (Satz 1 war faulty).
+- Zwischenchecks sind Einzeltemperatur-Residuen (nur bei ~−20/−14 °C für N94/N96), keine vollen Kurven.

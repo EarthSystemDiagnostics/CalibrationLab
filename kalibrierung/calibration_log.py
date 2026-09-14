@@ -4,7 +4,7 @@
 Combined calibration logging (MicroK + SchwaRTech/AWI Temperature head) as a command-line tool.
 
 Reads both serial instruments in parallel (one thread each) and writes three files
-per run to ./data/Output/:  <exp>_<time>_microk.txt, _ntc.txt, _meta.txt
+per run to laeufe/<exp>_<time>/:  <exp>_<time>_microk.txt, _ntc.txt, _meta.txt
 
 Usage:
     python3 calibration_log.py                 # uses config/param_combined.txt
@@ -17,14 +17,18 @@ Stop: Ctrl-C  -> both threads shut down cleanly and close their ports.
 import os
 import time
 import argparse
+import subprocess
 import threading
 from datetime import datetime
 
 import serial
 import serial.tools.list_ports
 
-# Measurement data lives under data/ (git-ignored); code and config do not.
-OUTPUT_DIR = os.path.join("data", "Output")
+# Paths hang off this folder, so the tools run from any working directory.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_PARAM = os.path.join(BASE_DIR, "config", "param_combined.txt")
+# One folder per run, checked into git: laeufe/<exp>_<time>/
+OUTPUT_DIR = os.path.join(BASE_DIR, "laeufe")
 
 import sprt   # SPRT ratio -> temperature (on-screen display only)
 import ntc    # NTC raw counts -> temperature (on-screen display only)
@@ -336,14 +340,53 @@ def logger_worker(stop_event, c, logger_port, logger_file, quiet=False):
 
 
 # --------------------------------------------------------------------------
+# Run folder, parameter path, code version
+# --------------------------------------------------------------------------
+def resolve_param(path):
+    """The parameter file as given; if it is not found from the working directory,
+    look for it relative to this folder (so `--param config/param_24h.txt` works
+    from anywhere)."""
+    if os.path.isabs(path) or os.path.exists(path):
+        return path
+    alt = os.path.join(BASE_DIR, path)
+    return alt if os.path.exists(alt) else path
+
+
+def run_dir(exp, run_stamp):
+    """Create and return the folder of one run: laeufe/<exp>_<run_stamp>/."""
+    d = os.path.join(OUTPUT_DIR, f"{exp}_{run_stamp}")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def git_state():
+    """(commit, dirty) of the code in this folder, 'unknown' without git.
+    Run folders do not count as dirty -- only code and config changes do."""
+    def git(*args):
+        return subprocess.run(["git", "-C", BASE_DIR, *args], capture_output=True,
+                              text=True, timeout=5).stdout.strip()
+    try:
+        commit = git("rev-parse", "HEAD")
+        if not commit:
+            return "unknown", "unknown"
+        dirty = git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)laeufe")
+        return commit, ("yes" if dirty else "no")
+    except (OSError, subprocess.SubprocessError):
+        return "unknown", "unknown"
+
+
+# --------------------------------------------------------------------------
 # Meta file
 # --------------------------------------------------------------------------
 def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description):
+    commit, dirty = git_state()
     with open(meta_file, "w") as m:
         m.write(f"Experiment       : {c['exp']}\n")
         m.write(f"Description      : {description}\n")
         m.write(f"Start (PC time)  : {datetime.now()}\n")
         m.write(f"Run stamp        : {run_stamp}\n")
+        m.write(f"Code commit      : {commit}\n")
+        m.write(f"Uncommitted code : {dirty}\n")
         m.write("\n--- Resolved settings ---\n")
         m.write(f"MicroK port      : {microk_port}\n")
         m.write(f"MicroK channels  : Reference={c['ref_ch']}  SPRT={c['sprt_chs']}\n")
@@ -351,8 +394,8 @@ def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, 
         m.write(f"NTC readout      : {c['active']}\n")
         m.write(f"Groups           : {c['Nr_NTCs_group']} sensors/group, {c['Nr_MeasPoints']} measurement points\n")
         m.write(f"Node IDs         : {c['Logger_sensorNo']}\n")
-        m.write(f"MicroK file      : {microk_file}\n")
-        m.write(f"NTC file         : {logger_file}\n")
+        m.write(f"MicroK file      : {os.path.relpath(microk_file, BASE_DIR)}\n")
+        m.write(f"NTC file         : {os.path.relpath(logger_file, BASE_DIR)}\n")
         m.write("\n--- Verbatim copy of the parameter file ---\n")
         with open(param_path) as p:
             m.write(p.read())
@@ -363,9 +406,10 @@ def write_meta(meta_file, param_path, c, microk_port, logger_port, microk_file, 
 # --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Combined MicroK + NTC calibration logging")
-    ap.add_argument("--param", default="config/param_combined.txt", help="path to the parameter file")
+    ap.add_argument("--param", default=DEFAULT_PARAM, help="path to the parameter file")
     ap.add_argument("--exp", default=None, help="override the experiment name")
     args = ap.parse_args()
+    args.param = resolve_param(args.param)
 
     c = read_config(args.param, exp_override=args.exp)
 
@@ -385,11 +429,11 @@ def main():
     print("Selected  TempHead ->", logger_port)
 
     # File names
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     run_stamp   = time.strftime("%Y%m%d-%H%M%S")
-    microk_file = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_microk.txt"
-    logger_file = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_ntc.txt"
-    meta_file   = f"{OUTPUT_DIR}/{c['exp']}_{run_stamp}_meta.txt"
+    out         = run_dir(c["exp"], run_stamp)
+    microk_file = f"{out}/{c['exp']}_{run_stamp}_microk.txt"
+    logger_file = f"{out}/{c['exp']}_{run_stamp}_ntc.txt"
+    meta_file   = f"{out}/{c['exp']}_{run_stamp}_meta.txt"
 
     write_meta(meta_file, args.param, c, microk_port, logger_port, microk_file, logger_file, run_stamp, description)
     print("Meta file written:", meta_file)
@@ -414,7 +458,7 @@ def main():
         stop_event.set()
         t_micro.join(timeout=15)
         t_logger.join(timeout=15)
-        print(f"Done. Files are in ./{OUTPUT_DIR}/")
+        print(f"Done. Files are in {out}/")
 
 
 if __name__ == "__main__":

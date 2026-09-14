@@ -3,7 +3,7 @@
 """
 SPRT resistance-ratio (W = Rt/Rtpw) -> temperature, for live display only.
 
-Ported from CalibrationChains/lib/SPRTRtoT_NTCtoR.R. The MicroK bridge reports a
+Ported from auswertung/lib/SPRTRtoT_NTCtoR.R. The MicroK bridge reports a
 dimensionless ratio W; this converts it to degrees Celsius using the same simple
 two-point LINEAR calibration the R workflow uses -- anchored on the mercury point
 and the water triple point:

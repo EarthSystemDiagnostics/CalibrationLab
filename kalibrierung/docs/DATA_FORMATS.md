@@ -1,8 +1,8 @@
 # Output data formats — for the R calibration pipeline
 
 Every run of `calibration_log.py` (legacy) or `calibration_auto.py` (bath-driven)
-writes to `./data/Output/` **four** files that share a stem
-`<experiment>_<YYYYMMDD-HHMMSS>_`:
+writes **four** files that share a stem `<experiment>_<YYYYMMDD-HHMMSS>_` into one
+run folder `laeufe/<experiment>_<YYYYMMDD-HHMMSS>/` (until 2026-09-14: `data/Output/`):
 
 | File            | Content                                             | Written by |
 |-----------------|-----------------------------------------------------|------------|
@@ -42,7 +42,7 @@ Notes for the reader:
   the ratio and never appears as a row.
 - With two SPRTs configured, rows of `Channel2` and `Channel3` **interleave**;
   split by field 5 before converting.
-- SPRT temperature = `ratio → T` via the channel's calibration. `lib/ReadMicroKandGetPlateaus.R::read_microk_file()` already does this (it calls
+- SPRT temperature = `ratio → T` via the channel's calibration. `auswertung/lib/ReadMicroKandGetPlateaus.R::read_microk_file()` already does this (it calls
   `SPRTglas_R2T` on field 3; despite the name, field 3 is the ratio, not R).
 
 ---
@@ -117,7 +117,7 @@ need none of that.
 
 ### counts → resistance → temperature
 Raw ADC counts (e.g. `864418`) convert exactly as in
-`CalibrationChains/lib/SPRTRtoT_NTCtoR.R` (mirrored in `ntc.py`):
+`auswertung/lib/SPRTRtoT_NTCtoR.R` (mirrored in `ntc.py`):
 
 ```
 ADC_FULLSCALE = 33554432        # 2^25
@@ -204,6 +204,9 @@ then (auto runs) a `--- Bath automation ---` block. Machine-useful bits:
   nodes and can be ignored.
 - The verbatim param copy carries the full provenance (bath protocol, ramps,
   stability settings) for the record.
+- `Code commit` and `Uncommitted code` (since 2026-09-14): git commit of the logging
+  code at the start of the run, and whether code or config had uncommitted changes.
+  File paths in the header are relative to `kalibrierung/`.
 
 Parse it only if you want provenance; everything needed for the calibration is in
 the three data files above.
@@ -212,7 +215,7 @@ the three data files above.
 
 ## Existing code you can reuse — and one trap to fix
 
-`recalib2sensors/check_repro.R` already has working helpers for this exact format:
+`archiv/2026-07_recalib2sensors/check_repro.R` already has working helpers for this exact format:
 `read_microk_file()` (from `lib`), `read_logger_2026()` (NTC parse),
 `match_ntc_to_sprt()`, `NTCcounts2R()`, `S4_predict_T_C()`. Reuse them.
 

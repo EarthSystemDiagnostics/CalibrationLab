@@ -1,0 +1,8 @@
+# Plateau schedule for automated calibration run
+# stability: tol=0.05 C, window=5.0 min, timeout=30.0 min/10K (floor 15.0 min)
+# columns: idx; setpoint_C; ramp_C_per_min; t_command; t_stable; t_dwell_start; t_dwell_end; stable_ok
+# each row is written when its dwell STARTS (survives Ctrl-C); t_dwell_end is the planned end = t_dwell_start + dwell.
+1; -37.0; 1.0; 2026-07-05 09:15:58.413108; 2026-07-05 09:31:00.455076; 2026-07-05 09:31:00.455117; 2026-07-05 12:51:00.455117; False
+2; -35.0; 1.0; 2026-07-05 12:51:03.733433; 2026-07-05 13:06:08.311967; 2026-07-05 13:06:08.312011; 2026-07-05 16:26:08.312011; False
+3; -20.0; 1.0; 2026-07-05 16:26:11.598340; 2026-07-05 17:11:13.654743; 2026-07-05 17:11:13.654787; 2026-07-05 20:31:13.654787; False
+4; -15.0; 1.0; 2026-07-05 20:31:15.421421; 2026-07-05 20:46:19.965833; 2026-07-05 20:46:19.965876; 2026-07-06 00:06:19.965876; False

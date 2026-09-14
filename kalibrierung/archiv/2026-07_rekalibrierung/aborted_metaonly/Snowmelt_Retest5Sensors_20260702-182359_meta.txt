@@ -1,0 +1,39 @@
+Experiment       : Snowmelt_Retest5Sensors
+Start (PC-Zeit)  : 2026-07-02 18:23:59.457935
+Run-Stempel      : 20260702-182359
+
+--- Aufgeloeste Einstellungen ---
+MicroK-Port      : /dev/cu.usbserial-A922BJHF
+MicroK-Kanaele   : Referenz=1  SPRT=['2']
+TempLogger-Port  : /dev/cu.usbserial-FT3GCNKB0
+NTC-Readout      : ['NTC1', 'NTC2', 'TestSB']
+Gruppen          : 5 Sensoren/Gruppe, 60 Messpunkte
+Node-IDs         : ['90', '91', '92', '93', '94']
+MicroK-Datei     : Output/Snowmelt_Retest5Sensors_20260702-182359_microk.txt
+NTC-Datei        : Output/Snowmelt_Retest5Sensors_20260702-182359_ntc.txt
+
+--- Woertliche Kopie der Parameterdatei ---
+# ============================================================
+#  Kombiniertes Kalibrier-Logging  -  Parameterdatei
+#  Format:   schluessel: wert       (Reihenfolge egal, '#' = Kommentar)
+#  Wird von Calibration_combined.ipynb gelesen (MicroK + NTC-Logger).
+# ============================================================
+
+# Experimentname (kommt in die Dateinamen)
+experiment: Snowmelt_Retest5Sensors
+
+# ---- MicroK-Bridge (SPRT-Referenz) ----
+# Kanaele:   Referenz ; SPRT1 [ ; SPRT2 ]
+microk_channels: 1;2
+# Port-Vorauswahl (optional; leer lassen = keine Vorauswahl)
+microk_port: usbserial-A922BJHF
+
+# ---- Temperatur-/NTC-Logger (Arduino) ----
+# Was auslesen (Auswahl aus: TempADC, NTC1, NTC2, TestSB, TestN, GND, PRESSURE)
+ntc_readout: NTC1;NTC2;TestSB
+# Sensoren pro Gruppe ; Messpunkte pro Gruppe
+ntc_groups: 5;60
+# Node-IDs der Sensoren
+ntc_nodes: 90;91;92;93;94
+# Port-Vorauswahl (optional)
+ntc_port: usbserial-FT3GCNKB0
