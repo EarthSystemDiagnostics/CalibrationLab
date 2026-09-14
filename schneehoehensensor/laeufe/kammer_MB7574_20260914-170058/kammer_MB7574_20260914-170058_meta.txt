@@ -1,0 +1,9 @@
+Experiment       : kammer_MB7574
+Run stamp        : 20260914-170058
+Start (PC time)  : 2026-09-14T17:01:24
+Persons          : M & T
+Sensor           : MaxBotix MB7574
+Serial number    : 
+Description      : Erster Test, -20 Grad seit 30min
+Code commit      : 2e1dbcfd36fa45b9e534eac0caf564bc417b9239
+Uncommitted code : no
