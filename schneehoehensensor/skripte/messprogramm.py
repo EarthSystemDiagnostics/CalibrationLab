@@ -6,6 +6,7 @@ with the logger (supply switched by the script) and go on to the next temperatur
     ./programm 20 -40 -50 -60 -70 20
     ./programm 20 -40 -70 -70:60min 20:ende --stabil 30 --toleranz 1
     ./programm 20 -40 --neu --personen "Thom" --seriennummer MB7574-01 --beschreibung "..."
+    ./programm status        running or not, latest events, chamber now (changes nothing)
 
 Temperatures come first, options after them. A temperature may carry a tag after a colon
 (file name, as ./kammer stufe --tag). The same temperature twice in a row measures again
@@ -126,7 +127,7 @@ def wait_stable(a, k, t, run, journal):
     """Until the chamber has stayed within ±toleranz of t for a.stabil minutes."""
     path = run / f"{run.name}_klima_T{t:+g}_{time.strftime('%H%M%S')}.txt"
     deadline = time.time() + a.max_warten * 3600
-    readings, since, last_error, told_errors = [], None, None, False
+    readings, since, last_error, told_errors, told_reached = [], None, None, False, False
     with open(path, "w") as log:
         log.write(f"# Klimakammer {a.host}, Soll {t:+g} °C, Toleranz {a.toleranz:g} K, stabil {a.stabil:g} min "
                   "(Messprogramm)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\n")
@@ -159,6 +160,10 @@ def wait_stable(a, k, t, run, journal):
                 since = now
                 journal(f"{t:+g} °C erreicht (ist {ist:+.1f}), Messung um {hm(now + a.stabil * 60)}, "
                         f"wenn stabil")
+                if not told_reached:       # once per step, re-entries after overshoot only go to the journal
+                    notify(f"{t:+g} °C erreicht", f"Messung um {hm(now + a.stabil * 60)}, wenn die Kammer "
+                           f"±{a.toleranz:g} K hält", a)
+                    told_reached = True
             elif not inside and since is not None:
                 journal(f"Toleranz verlassen (ist {ist:+.1f} °C), Haltezeit beginnt neu")
                 since = None
@@ -216,7 +221,46 @@ def measure(a, port, run, t, tag, journal):
     return summary
 
 
+def show_status(argv):
+    """Running programme (PID), latest events and chamber readings; changes nothing."""
+    ap = argparse.ArgumentParser(prog="programm status", description="Stand des Messprogramms, ändert nichts")
+    ap.add_argument("--zeilen", type=int, default=12, help="letzte Ereigniszeilen (Standard 12)")
+    ap.add_argument("--host", default=HOST)
+    ap.add_argument("--port-kammer", dest="kammer_port", type=int, default=PORT)
+    ap.add_argument("--laeufe", type=Path, default=RUNS_DIR, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    out = subprocess.run(["pgrep", "-f", "skripte/messprogramm.py"], capture_output=True, text=True).stdout.split()
+    pids = [p for p in out if p != str(os.getpid()) and " status" not in
+            subprocess.run(["ps", "-p", p, "-o", "args="], capture_output=True, text=True).stdout]
+    print(f"Messprogramm läuft (PID {', '.join(pids)})" if pids else "Kein Messprogramm läuft.")
+    journals = sorted(a.laeufe.glob("*/*_programm_*.txt"), key=lambda p: p.stat().st_mtime)
+    if journals:
+        j = journals[-1]
+        lines = j.read_text(errors="replace").splitlines()
+        age = (time.time() - j.stat().st_mtime) / 60
+        print(f"\n{j.parent.name}/{j.name} (letzter Eintrag vor {age:.0f} min):")
+        if len(lines) > a.zeilen:
+            print("  " + lines[0])
+            print("  …")
+        for line in lines[-a.zeilen:]:
+            print("  " + line)
+        klima = sorted(j.parent.glob("*_klima_T*.txt"), key=lambda p: p.stat().st_mtime)
+        if klima:
+            rows = [l.split("\t") for l in klima[-1].read_text(errors="replace").splitlines() if not l.startswith("#")]
+            if rows and len(rows[-1]) >= 3:
+                print(f"\nLetzte Kammerabfrage {rows[-1][0][11:19]}: ist {rows[-1][1]} °C, soll {rows[-1][2]} °C")
+    else:
+        print("Kein Programm-Log gefunden.")
+    try:
+        k = Chamber(a.host, a.kammer_port)
+        print(f"Kammer jetzt: ist {k.actual():+.1f} °C, soll {k.setpoint():+.1f} °C, {running_text(k.status())}")
+    except SimServError as e:
+        print(f"Kammer nicht abfragbar: {e}")
+
+
 def main():
+    if sys.argv[1:2] == ["status"]:
+        return show_status(sys.argv[2:])
     steps, argv = split_steps(sys.argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
                                  usage="%(prog)s TEMPERATUR[:tag] ... [Optionen]")

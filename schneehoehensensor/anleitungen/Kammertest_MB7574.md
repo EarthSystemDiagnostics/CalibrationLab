@@ -76,10 +76,11 @@ Die Weiss ClimeEvent lässt sich vom Labor-Mac über das LAN-Kabel abfragen und 
 
 - Für jede Temperatur: Kammer-Sollwert setzen, warten bis die Kammer `--stabil` Minuten (Standard 30) ununterbrochen innerhalb ±`--toleranz` K (Standard 1) liegt, dann eine Stufe wie `./kammer stufe … --netzteil` messen und pushen. Verlässt die Kammer das Band, beginnt die Haltezeit neu. `-70:60min` misst nach weiteren 30 min erneut, mit Tag `60min`.
 - Vorher prüft es nur lesend Kammer, Netzteil und Sensor-Port und fragt einmal „Programm starten? [j/N]“. Ohne `--neu` misst es in den neuesten Laufordner.
-- Meldungen (Mac und ntfy) nach jeder Stufe mit Median von Zyklus 1 und Auffälligkeiten, am Ende und bei Abbruch.
+- Meldungen (Mac und ntfy): Solltemperatur erreicht (mit voraussichtlicher Messzeit), nach jeder Stufe mit Median von Zyklus 1 und Auffälligkeiten, am Ende, bei Abbruch und wenn die Kammer 10 min nicht antwortet.
 - Abbruch mit Meldung: Kammer-Alarm, nach `--max-warten` Stunden (Standard 6) nicht stabil, Sollwert am Panel geändert, Messung fehlgeschlagen (Netzteil, Überspannung). Das Netzteil ist dann aus, der Kammer-Sollwert bleibt. „AUFFÄLLIG“ allein bricht nicht ab.
 - Stoppen: Ctrl-C, oder `kill <PID>` (PID steht in der ersten Zeile von `…_programm_….txt`). Ereignisse stehen in `…_programm_….txt`, Kammerwerte in `…_klima_T….txt`.
-- Per SSH ohne offenes Fenster starten: `nohup ./programm … --ja > /tmp/programm.out 2>&1 &`, verfolgen mit `tail -f /tmp/programm.out`.
+- Unabhängig vom Terminal-Fenster starten (auch per SSH): `screen -dmS messprogramm caffeinate -i ./programm … --ja`. Live ansehen: `screen -r messprogramm`, wieder lösen ohne Abbruch: Ctrl-A, dann D.
+- **`./programm status`** zeigt, ob ein Programm läuft (PID), die letzten Ereignisse, die letzte Kammerabfrage und die Kammer jetzt. Ändert nichts. Unterwegs: ntfy, oder auf GitHub `…_programm_….txt` und `…_zusammenfassung.csv` im Laufordner (nach jeder Stufe gepusht).
 
 ## Ablauf
 

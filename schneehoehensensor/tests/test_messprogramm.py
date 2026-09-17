@@ -58,6 +58,13 @@ def test_programme_runs_all_steps():
     assert text.count("Kammer-Sollwert") == 1, text          # same temperature: setpoint not set again
     assert srv.state["soll"] == -10.0 and not supply.on and "*RST" not in supply.log
 
+    srv2 = start_sim(soll=-10.0, ist=-10.0)
+    s = subprocess.run([sys.executable, str(SCRIPT), "status", "--laeufe", str(laeufe), "--host", "127.0.0.1",
+                        "--port-kammer", str(srv2.server_address[1])], capture_output=True, text=True, timeout=30)
+    srv2.shutdown()
+    assert s.returncode == 0 and "Kein Messprogramm läuft" in s.stdout and "Programm fertig" in s.stdout, s.stdout + s.stderr
+    assert "Kammer jetzt: ist -10.0 °C, soll -10.0 °C" in s.stdout and "Letzte Kammerabfrage" in s.stdout, s.stdout
+
 
 def test_failed_step_stops_programme():
     srv, supply, sensor, stop = hardware(vout="12.00")
