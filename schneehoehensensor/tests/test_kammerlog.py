@@ -62,6 +62,150 @@ def step(laeufe, soll, value, stdin):
                stdin=stdin)
 
 
+class FakeSupply(threading.Thread):
+    """EX355P on a pseudo-terminal, answering like the lab supply did on 17.09.2026."""
+
+    def __init__(self, ident="Thurlby Thandar,EX355P,0,v2.00", amps="0.09", vout="05.00"):
+        super().__init__(daemon=True)
+        self.master, slave = pty.openpty()
+        self.port = os.ttyname(slave)
+        os.close(slave)
+        self.idn, self.amps, self.vout = ident, amps, vout
+        self.on, self.volts, self.limit, self.log = False, 1.0, 1.0, []
+
+    def run(self):
+        buf = b""
+        while True:
+            try:
+                chunk = os.read(self.master, 256)
+            except OSError:
+                time.sleep(0.05)
+                continue
+            buf += chunk
+            *lines, buf = buf.split(b"\n")
+            for raw in lines:
+                cmd = raw.decode().strip()
+                if not cmd:
+                    continue
+                self.log.append(cmd)
+                answer = None
+                if cmd == "*IDN?":
+                    answer = self.idn
+                elif cmd.startswith("V "):
+                    self.volts = float(cmd[2:])
+                elif cmd.startswith("I "):
+                    self.limit = float(cmd[2:])
+                elif cmd == "V?":
+                    answer = f"V {self.volts:05.2f}"
+                elif cmd == "I?":
+                    answer = f"I {self.limit:.2f}"
+                elif cmd in ("ON", "OFF"):
+                    self.on = cmd == "ON"
+                elif cmd == "OUT?":
+                    answer = "OUT ON" if self.on else "OUT OFF"
+                elif cmd == "VO?":
+                    answer = f"V {self.vout}" if self.on else "V 00.10"
+                elif cmd == "IO?":
+                    answer = f"I {self.amps}" if self.on else "I 0.00"
+                if answer is not None:
+                    os.write(self.master, (answer + "\r\n").encode())
+
+
+def sensor_on_supply(supply, value, stop):
+    """Sensor pseudo-terminal that sends its header when the supply switches on and then readings."""
+    master, slave = pty.openpty()
+    name = os.ttyname(slave)
+    os.close(slave)
+
+    def run():
+        was_on, last = False, 0.0
+        while not stop.is_set():
+            try:
+                if supply.on and not was_on:
+                    time.sleep(0.1)
+                    os.write(master, HEADER)
+                    last = time.time()
+                if supply.on and time.time() - last >= 0.3:
+                    os.write(master, f"R{value:04d}\r".encode())
+                    last = time.time()
+            except OSError:
+                pass
+            was_on = supply.on
+            time.sleep(0.02)
+
+    threading.Thread(target=run, daemon=True).start()
+    return name
+
+
+def test_supply_switched_and_current_read():
+    laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
+    run(laeufe, "neu", stdin="x\nx\nx\n")
+    supply = FakeSupply()
+    supply.start()
+    stop = threading.Event()
+    sensor = sensor_on_supply(supply, 812, stop)
+    r = run(laeufe, "stufe", "20", "--port", sensor, "--netzteil", supply.port,
+            "--ein", "3", "--aus", "1", "--keine-bemerkung")
+    stop.set()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "V 5.00" in supply.log and "I 0.15" in supply.log and "*RST" not in supply.log, supply.log
+    assert supply.log.count("ON") == 3 and not supply.on, supply.log
+    (lauf,) = [p for p in laeufe.iterdir() if p.is_dir()]
+    with open(lauf / f"{lauf.name}_zusammenfassung.csv", newline="") as f:
+        (row,) = list(csv.DictReader(f))
+    assert (row["strom_mA"], row["zyklen_mit_daten"], row["zyklen_mit_kopfzeile"]) == ("90", "3", "3"), row
+
+
+def test_overvoltage_switches_off_and_stops():
+    laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
+    run(laeufe, "neu", stdin="x\nx\nx\n")
+    supply = FakeSupply(vout="12.00")          # e.g. a fault: output far above the setting
+    supply.start()
+    stop = threading.Event()
+    sensor = sensor_on_supply(supply, 812, stop)
+    r = run(laeufe, "stufe", "20", "--port", sensor, "--netzteil", supply.port,
+            "--ein", "3", "--aus", "1", "--keine-bemerkung")
+    stop.set()
+    assert r.returncode != 0 and "über 5.3 V" in r.stderr and not supply.on, r.stdout + r.stderr
+    assert supply.log.count("ON") == 1, supply.log
+
+
+def test_changed_knob_setting_is_reset_before_switching_on():
+    laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
+    run(laeufe, "neu", stdin="x\nx\nx\n")
+    supply = FakeSupply()
+    supply.volts, supply.limit = 12.0, 1.0      # someone turned the knobs in local mode
+    supply.start()
+    stop = threading.Event()
+    sensor = sensor_on_supply(supply, 812, stop)
+    r = run(laeufe, "stufe", "20", "--port", sensor, "--netzteil", supply.port,
+            "--ein", "1", "--aus", "0.5", "--zyklen", "1", "--keine-bemerkung")
+    stop.set()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert supply.log.index("V 5.00") < supply.log.index("ON") and (supply.volts, supply.limit) == (5.0, 0.15)
+
+
+def test_supply_selftest_runs():
+    supply = FakeSupply()
+    supply.start()
+    r = subprocess.run([sys.executable, str(SCRIPT.parent / "ex355p.py"), "--port", supply.port, "--test",
+                        "--zyklen", "1", "--ein", "1", "--aus", "1"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "Ende: Ausgang AUS" in r.stdout and not supply.on, r.stdout + r.stderr
+    assert "Vorher eingestellt: 1.00 V, 1.00 A" in r.stdout, r.stdout
+
+
+def test_wrong_device_on_supply_port_refused():
+    laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
+    run(laeufe, "neu", stdin="x\nx\nx\n")
+    supply = FakeSupply(ident="Other Instrument,XYZ,0,v1")
+    supply.start()
+    stop = threading.Event()
+    sensor = sensor_on_supply(supply, 812, stop)
+    r = run(laeufe, "stufe", "20", "--port", sensor, "--netzteil", supply.port, "--keine-bemerkung")
+    stop.set()
+    assert r.returncode != 0 and "unerwartetes Gerät" in r.stderr and "ON" not in supply.log, r.stderr
+
+
 def test_step_without_run_folder_stops():
     r = run(Path(tempfile.mkdtemp(prefix="kammerlog_")), "stufe", "20", "--port", "/dev/null")
     assert r.returncode != 0 and "Erst: ./kammer neu" in r.stderr, r.stderr

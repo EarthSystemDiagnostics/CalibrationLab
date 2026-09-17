@@ -20,6 +20,8 @@ Summary per step: median of all values; median of cycle 1, the cold start after 
 soak and the basis of the comparison with the +20 C reference; drift = median of the
 last cycle minus cycle 1, i.e. self-heating (the off-time does not cool the sensor back).
 Reference: the step tagged 'bezug' if there is one, otherwise the first +20 C step without tag.
+With --netzteil the EX355P supply is switched by the script (ex355p.py) and the current is read
+back several times per on-phase; otherwise the operator switches and types the current.
 
 Procedure: schneehoehensensor/anleitungen/Kammertest_MB7574.md
 """
@@ -37,6 +39,9 @@ import time
 from pathlib import Path
 
 import serial
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ex355p import EX355P, SupplyError, DEFAULT_PORT as PSU_PORT, DEFAULT_BAUD as PSU_BAUD   # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent     # schneehoehensensor/
 RUNS_DIR = PROJECT_DIR / "laeufe"
@@ -82,9 +87,13 @@ def git_state(path):
 
 
 def find_port():
-    ports = sorted(glob.glob("/dev/cu.usbserial*"))
+    """Sensor port: the FTDI TTL-232R cable if present, otherwise the only /dev/cu.usbserial*."""
+    from serial.tools import list_ports
+    ttl = sorted(p.device for p in list_ports.comports()
+                 if p.device.startswith("/dev/cu.") and "TTL232R" in f"{p.product} {p.description}")
+    ports = ttl if len(ttl) == 1 else sorted(glob.glob("/dev/cu.usbserial*"))
     if len(ports) != 1:
-        sys.exit(f"FTDI-Port nicht eindeutig ({ports or 'keiner gefunden'}), mit --port angeben")
+        sys.exit(f"Sensor-Port nicht eindeutig ({ports or 'keiner gefunden'}), mit --port angeben")
     return ports[0]
 
 
@@ -164,9 +173,15 @@ class SensorReader(threading.Thread):
                     self.last = text
 
 
-def countdown(seconds, label, reader):
+def countdown(seconds, label, reader, sample=None, every=6.0):
+    """Wait with a status line; call sample() 2 s into the phase (half-way if shorter),
+    then every few seconds."""
     end = time.time() + seconds
+    next_sample = time.time() + min(2.0, seconds / 2)
     while (rest := end - time.time()) > 0:
+        if sample and time.time() >= next_sample and rest > 0.3:
+            sample()
+            next_sample = time.time() + every
         print(f"\r  {label}: noch {rest:3.0f} s   letzte Zeile: {reader.last[:20]:<20}", end="", flush=True)
         time.sleep(min(0.25, rest))
     print()
@@ -280,38 +295,88 @@ def cmd_new(a):
 def cmd_step(a):
     run = pick_run(a)
     port = a.port or find_port()
-    users = port_users(port)
-    if users:
-        sys.exit(f"Port {port} ist schon geöffnet von {', '.join(users)}. "
-                 "Dort trennen (CoolTerm: Disconnect), dann erneut starten.")
+    for p in filter(None, (port, a.netzteil)):
+        users = port_users(p)
+        if users:
+            sys.exit(f"Port {p} ist schon geöffnet von {', '.join(users)}. "
+                     "Dort trennen (CoolTerm: Disconnect), dann erneut starten.")
+    psu, ident = None, ""
+    if a.netzteil:
+        try:
+            psu = EX355P(a.netzteil, a.netzteil_baud)
+            ident = psu.identify()
+            if "EX355P" not in ident:
+                raise SupplyError(f"unerwartetes Gerät am Netzteil-Port {a.netzteil}: {ident}")
+            psu.setup()
+        except SupplyError as e:
+            if psu:
+                psu.close()
+            sys.exit(str(e))
     start = dt.datetime.now()
     log_path = run / ("_".join(filter(None, [run.name, f"T{a.soll:+g}", a.tag, start.strftime("%H%M%S")])) + ".txt")
     csv_path = run / f"{run.name}_zusammenfassung.csv"
 
     with serial.Serial(port, 9600, timeout=0.2) as ser, open(log_path, "w") as log:
         log.write(f"# MB7574 Kammertest, Lauf {run.name}, Soll {a.soll:+g} °C, Tag '{a.tag}', Port {port}, "
-                  f"{a.zyklen} Zyklen je {a.ein:g} s ein / {a.aus:g} s aus\n"
+                  f"{a.zyklen} Zyklen je {a.ein:g} s ein / {a.aus:g} s aus"
+                  + (f", Netzteil automatisch {a.netzteil} ({ident}), 5.00 V / 0.15 A" if psu else "") + "\n"
                   "# zeit\tt_s\tzyklus\tphase\tzeile\n")
         reader = SensorReader(ser, log)
         reader.start()
-        print(f"Lauf: {run.name}\nLog:  {log_path.name}\nNetzteil AUS lassen bis zur Ansage.")
-        time.sleep(2)
-        for k in range(1, a.zyklen + 1):
-            reader.cycle, reader.phase = k, "EIN"
-            reader.note(k, "EIN", "# Ansage Netzteil EIN")
-            print(f"\a\nZyklus {k}/{a.zyklen}: Netzteil EIN" + ("   (Strom ablesen)" if k == 1 else ""))
-            countdown(a.ein, "EIN", reader)
-            reader.phase = "AUS"
-            reader.note(k, "AUS", "# Ansage Netzteil AUS")
-            print(f"\aZyklus {k}/{a.zyklen}: Netzteil AUS")
-            if k < a.zyklen:
-                countdown(a.aus, "AUS", reader)
-            else:
-                time.sleep(1)       # last cycle: no off-time needed, only catch the final line
+        amps = []
+
+        def sample():
+            try:
+                volts, a_now = psu.measure()
+            except SupplyError as e:
+                reader.note(reader.cycle, reader.phase, f"# Netzteil: {e}")
+                if "über" in str(e):
+                    raise          # overvoltage: output is already off, stop the step
+                return
+            amps.append(a_now)
+            reader.note(reader.cycle, reader.phase, f"# Netzteil {volts:.1f} V {a_now * 1000:.0f} mA")
+
+        print(f"Lauf: {run.name}\nLog:  {log_path.name}\n"
+              + ("Netzteil wird automatisch geschaltet." if psu else "Netzteil AUS lassen bis zur Ansage."))
+        try:
+            time.sleep(2)
+            for k in range(1, a.zyklen + 1):
+                reader.cycle, reader.phase = k, "EIN"
+                if psu:
+                    psu.on()
+                    reader.note(k, "EIN", "# Netzteil EIN (automatisch)")
+                    print(f"\nZyklus {k}/{a.zyklen}: Netzteil EIN (automatisch)")
+                else:
+                    reader.note(k, "EIN", "# Ansage Netzteil EIN")
+                    print(f"\a\nZyklus {k}/{a.zyklen}: Netzteil EIN" + ("   (Strom ablesen)" if k == 1 else ""))
+                countdown(a.ein, "EIN", reader, sample if psu else None)
+                reader.phase = "AUS"
+                if psu:
+                    psu.off()
+                    reader.note(k, "AUS", "# Netzteil AUS (automatisch)")
+                    print(f"Zyklus {k}/{a.zyklen}: Netzteil AUS (automatisch)")
+                else:
+                    reader.note(k, "AUS", "# Ansage Netzteil AUS")
+                    print(f"\aZyklus {k}/{a.zyklen}: Netzteil AUS")
+                if k < a.zyklen:
+                    countdown(a.aus, "AUS", reader)
+                else:
+                    time.sleep(1)       # last cycle: no off-time needed, only catch the final line
+        finally:
+            if psu:
+                try:
+                    psu.off()
+                finally:
+                    psu.close()
         reader.halt.set()
         reader.join()
-        current_text = input("\nStrom während EIN in mA (leer = nicht abgelesen): ").strip()
-        remark = input("Bemerkung: ").strip()
+        if psu:
+            current_text = fmt(1000 * statistics.median(amps) if amps else None)
+            print(f"\nStrom laut Netzteil: {current_text or '-'} mA (Median aus {len(amps)} Ablesungen, Auflösung 10 mA)")
+            remark = "" if a.keine_bemerkung else input("Bemerkung: ").strip()
+        else:
+            current_text = input("\nStrom während EIN in mA (leer = nicht abgelesen): ").strip()
+            remark = input("Bemerkung: ").strip()
         reader.note(0, "-", f"# Strom {current_text or '-'} mA; Bemerkung: {remark}")
 
     values, n_no_echo, invalid, with_data, with_header, per_cycle = evaluate(reader.lines, a.zyklen)
@@ -399,14 +464,21 @@ def main():
     st.add_argument("--zyklen", type=int, default=3)
     st.add_argument("--ein", type=float, default=20, help="Sekunden Netzteil ein (Standard 20)")
     st.add_argument("--aus", type=float, default=10, help="Sekunden Netzteil aus (Standard 10)")
-    st.add_argument("--port", help="serieller Port, Standard: einziger /dev/cu.usbserial*")
+    st.add_argument("--port", help="Sensor-Port, Standard: das TTL-232R-Kabel")
+    st.add_argument("--netzteil", nargs="?", const=PSU_PORT,
+                    help=f"Netzteil EX355P selbst schalten und Strom lesen (Port, Standard {PSU_PORT})")
+    st.add_argument("--netzteil-baud", type=int, default=PSU_BAUD, help=argparse.SUPPRESS)
+    st.add_argument("--keine-bemerkung", action="store_true", help="nicht nach einer Bemerkung fragen")
     st.add_argument("--lauf", help="Laufordner (Name oder Pfad), Standard: der neueste")
 
     ab = sub.add_parser("abschliessen", help="Notizen anlegen, Laufordner einchecken und pushen")
     ab.add_argument("--lauf", help="Laufordner (Name oder Pfad), Standard: der neueste")
 
     a = ap.parse_args()
-    {"neu": cmd_new, "stufe": cmd_step, "abschliessen": cmd_close}[a.command](a)
+    try:
+        {"neu": cmd_new, "stufe": cmd_step, "abschliessen": cmd_close}[a.command](a)
+    except SupplyError as e:
+        sys.exit(f"Netzteil: {e} (Ausgang wurde ausgeschaltet)")
 
 
 if __name__ == "__main__":
