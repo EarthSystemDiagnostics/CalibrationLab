@@ -1,0 +1,9 @@
+Experiment       : kammer_MB7574
+Run stamp        : 20260917-182810
+Start (PC time)  : 2026-09-17T18:28:10
+Persons          : Thom
+Sensor           : MaxBotix MB7574
+Serial number    : MB7574-01
+Description      : Nachtprogramm 20 h: Kurzmessung, -70-Robustheit, Warm-Checks
+Code commit      : 407286a927f30a40d67df864e259574f8d58ac7d
+Uncommitted code : no
