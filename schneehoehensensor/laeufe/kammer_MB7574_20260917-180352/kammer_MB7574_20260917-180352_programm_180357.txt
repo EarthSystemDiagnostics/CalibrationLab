@@ -2,3 +2,10 @@
 2026-09-17T18:03:57  Stufe 1/2: -50 °C
 2026-09-17T18:03:58  -50 °C erreicht (ist -50.0), Messung um 18:04, wenn stabil
 2026-09-17T18:04:58  Messung -50 °C beginnt
+2026-09-17T18:06:27    Strom laut Netzteil: 100 mA (Median aus 9 Ablesungen, Auflösung 10 mA)
+2026-09-17T18:06:27    Median Zyklus 1 (Kaltstart) 970 mm, Anstieg bis Zyklus 3: +2.5 mm
+2026-09-17T18:06:27    AUFFÄLLIG: 4 × R0500 (Echo näher als 50 cm)
+2026-09-17T18:06:37  Stufe 2/2: -45 °C
+2026-09-17T18:06:37  Kammer-Sollwert -45 °C gesetzt
+2026-09-17T18:11:39  -45 °C erreicht (ist -45.7), Messung um 18:12, wenn stabil
+2026-09-17T18:12:40  Messung -45 °C beginnt
