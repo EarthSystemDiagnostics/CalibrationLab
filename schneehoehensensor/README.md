@@ -6,7 +6,8 @@ Frage: Überlebt der MB7574 Plateau-Wintertemperaturen bis −70 °C und liefert
 |---|---|
 | `aufbau/` | Laboraufbau: Aderbelegung, Stecklage, Prüfung vor dem Einschalten |
 | `anleitungen/` | `Kammertest_MB7574.md` |
-| `skripte/` | `mb7574_kammerlog.py`, Logger mit `neu`, `stufe`, `abschliessen` |
+| `kammer` | Kurzaufruf des Loggers: `./kammer neu`, `./kammer stufe -40`, `./kammer abschliessen` |
+| `skripte/` | `mb7574_kammerlog.py`, der Logger selbst |
 | `tests/` | `test_kammerlog.py`, ohne Hardware |
 | `laeufe/` | ein Ordner je Kammertest |
 

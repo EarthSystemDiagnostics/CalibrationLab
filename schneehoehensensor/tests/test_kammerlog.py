@@ -62,7 +62,13 @@ def step(laeufe, soll, value, stdin):
 
 def test_step_without_run_folder_stops():
     r = run(Path(tempfile.mkdtemp(prefix="kammerlog_")), "stufe", "20", "--port", "/dev/null")
-    assert r.returncode != 0 and "Erst: mb7574_kammerlog.py neu" in r.stderr, r.stderr
+    assert r.returncode != 0 and "Erst: ./kammer neu" in r.stderr, r.stderr
+
+
+def test_short_command_runs():
+    r = subprocess.run([str(SCRIPT.parent.parent / "kammer"), "stufe", "--help"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and "Solltemperatur" in r.stdout, r.stdout + r.stderr
 
 
 def test_old_summary_is_upgraded_from_the_log():

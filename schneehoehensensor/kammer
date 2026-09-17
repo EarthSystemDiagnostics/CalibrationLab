@@ -1,0 +1,4 @@
+#!/bin/sh
+# Kurzaufruf des Kammertest-Loggers, im Ordner schneehoehensensor:
+#   ./kammer neu     ./kammer stufe -40     ./kammer abschliessen
+exec python3 "$(dirname "$0")/skripte/mb7574_kammerlog.py" "$@"

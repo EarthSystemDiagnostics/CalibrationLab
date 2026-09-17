@@ -6,6 +6,8 @@
     python3 schneehoehensensor/skripte/mb7574_kammerlog.py stufe -70 --tag 60min
     python3 schneehoehensensor/skripte/mb7574_kammerlog.py abschliessen
 
+Short form inside schneehoehensensor/:  ./kammer neu | ./kammer stufe -40 | ./kammer abschliessen
+
 neu           creates laeufe/kammer_MB7574_<YYYYMMDD-HHMMSS>/ with <stem>_meta.txt
               (persons, serial number, description, code commit).
 stufe <T>     one temperature step in the newest run folder: announces the power
@@ -94,7 +96,7 @@ def pick_run(a):
         return p
     runs = sorted(p for p in a.laeufe.glob(f"{EXPERIMENT}_*") if p.is_dir())
     if not runs:
-        sys.exit(f"Kein Laufordner in {a.laeufe}. Erst: mb7574_kammerlog.py neu")
+        sys.exit(f"Kein Laufordner in {a.laeufe}. Erst: ./kammer neu")
     return runs[-1]
 
 
