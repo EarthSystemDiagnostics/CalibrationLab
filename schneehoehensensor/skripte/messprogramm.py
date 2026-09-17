@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
-"""Unattended chamber programme: for every temperature set the chamber, wait until the
-chamber air has stayed within the tolerance for --stabil minutes, then measure one step
-with the logger (supply switched by the script) and go on to the next temperature.
+"""Unattended chamber programme: for every step set the chamber, wait until the chamber air
+has stayed within the tolerance for the step's holding time, then measure the step with the
+logger (supply switched by the script) and go on to the next step.
 
     ./programm 20 -40 -50 -60 -70 20
     ./programm 20 -40 -70 -70:60min 20:ende --stabil 30 --toleranz 1
-    ./programm 20 -40 --neu --personen "Thom" --seriennummer MB7574-01 --beschreibung "..."
+    ./programm --plan programme/nacht_20h.txt --neu --personen "Thom" --seriennummer MB7574-01
     ./programm status        running or not, latest events, chamber now (changes nothing)
 
 Temperatures come first, options after them. A temperature may carry a tag after a colon
 (file name, as ./kammer stufe --tag). The same temperature twice in a row measures again
-after another --stabil minutes.
+after another holding time.
+
+Plan file (--plan): one step per line, '#' starts a comment, columns separated by blanks:
+
+    # soll[:tag]   stabil_min  zyklen  ein_s  aus_s
+    -50:abkling    0           8       20     10,20,40,80,160,320,640
+    -70:dauer      30          120     20     160
+    20:auftau      60          0
+
+Missing columns or '-' take the command-line values (--stabil, --zyklen, --ein, --aus).
+stabil 0 measures as soon as the chamber is within the tolerance; zyklen 0 only holds.
+A list of off-times applies cycle by cycle.
 
 Before the chamber is touched, the script checks chamber, supply and sensor port and asks
-once for the whole programme (--ja skips the question). The stability timer restarts
-whenever the chamber leaves the tolerance band. The programme stops, with a notification, on
-a chamber alarm, when a step does not reach stability within --max-warten hours, or when a
-step fails (supply error, overvoltage). The chamber setpoint then stays as it is; the supply is
-off. A step that is only 'AUFFÄLLIG' is reported and the programme goes on.
+once for the whole programme (--ja skips the question). The holding timer restarts whenever
+the chamber leaves the tolerance band. Chamber network errors are retried for --netz-geduld
+minutes. The programme stops, with a notification, on a chamber alarm, when a step does not
+reach stability within --max-warten hours, or when a step fails (supply error, overvoltage).
+The chamber setpoint then stays as it is; the supply is off. A step that is only 'AUFFÄLLIG'
+is reported and the programme goes on.
 
 Ctrl-C or 'kill <PID>' stop it the same way. Events go to <stem>_programm_<HHMMSS>.txt, chamber
-readings to <stem>_klima_T<T>_<HHMMSS>.txt in the run folder; each step is pushed by the logger.
+readings (also during the measurement) to <stem>_klima_T<T>_<HHMMSS>.txt in the run folder;
+each step is pushed by the logger.
 """
 import argparse
 import os
@@ -28,6 +41,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,7 +49,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ex355p import EX355P, SupplyError, DEFAULT_PORT as PSU_PORT, DEFAULT_BAUD as PSU_BAUD   # noqa: E402
 from klimakammer import (HOST, PORT, T_MIN, T_MAX, STATUS_RUNNING, STATUS_ALARM, Chamber,   # noqa: E402
                          SimServError, default_ntfy, hm, notify, rate_per_min, running_text)
-from mb7574_kammerlog import RUNS_DIR, find_port, pick_run, port_users, stop_on_sigterm   # noqa: E402
+from mb7574_kammerlog import (RUNS_DIR, find_port, parse_off_times, pick_run, port_users,   # noqa: E402
+                              stop_on_sigterm)
 
 LOGGER = Path(__file__).resolve().parent / "mb7574_kammerlog.py"
 STEP = re.compile(r"^([-+]?\d+(?:\.\d+)?)(?::([A-Za-z0-9_-]+))?$")
@@ -55,6 +70,45 @@ def split_steps(argv):
             return steps, argv[i:]
         steps.append((float(m.group(1)), m.group(2) or ""))
     return steps, []
+
+
+def read_plan(path, a):
+    """Steps as dicts (soll, tag, stabil, zyklen, ein, aus) from a plan file."""
+    steps = []
+    for n, raw in enumerate(Path(path).read_text().splitlines(), 1):
+        cols = raw.split("#", 1)[0].split()
+        if not cols:
+            continue
+        m = STEP.match(cols[0])
+        if not m or len(cols) > 5:
+            raise ProgrammeError(f"{path}, Zeile {n}: erwartet 'soll[:tag] stabil zyklen ein aus': {raw.strip()}")
+        cols += ["-"] * (5 - len(cols))
+        try:
+            step = {"soll": float(m.group(1)), "tag": m.group(2) or "",
+                    "stabil": a.stabil if cols[1] == "-" else float(cols[1]),
+                    "zyklen": a.zyklen if cols[2] == "-" else int(cols[2]),
+                    "ein": a.ein if cols[3] == "-" else float(cols[3]),
+                    "aus": a.aus if cols[4] == "-" else cols[4]}
+            times = parse_off_times(step["aus"])
+        except ValueError:
+            raise ProgrammeError(f"{path}, Zeile {n}: keine Zahl: {raw.strip()}") from None
+        if step["stabil"] < 0 or step["zyklen"] < 0 or step["ein"] <= 0 or not times or min(times) < 0:
+            raise ProgrammeError(f"{path}, Zeile {n}: Werte außerhalb des Bereichs: {raw.strip()}")
+        steps.append(step)
+    if not steps:
+        raise ProgrammeError(f"{path}: keine Stufen")
+    return steps
+
+
+def step_name(s):
+    return f"{s['soll']:+g} °C" + (f" ({s['tag']})" if s["tag"] else "")
+
+
+def step_minutes(s):
+    """Duration of the measurement itself in minutes (without waiting)."""
+    offs = parse_off_times(s["aus"])
+    off_total = sum(offs[k % len(offs)] for k in range(max(s["zyklen"] - 1, 0)))
+    return (s["zyklen"] * s["ein"] + off_total + (5 if s["zyklen"] else 0)) / 60
 
 
 class Journal:
@@ -109,89 +163,136 @@ def preflight(a, k):
     return port
 
 
+def patiently(a, what, fn):
+    """fn() with retries on chamber network errors for up to --netz-geduld minutes."""
+    first = time.time()
+    while True:
+        try:
+            return fn()
+        except SimServError as e:
+            if time.time() - first > a.netz_geduld * 60:
+                raise SimServError(f"{what}: seit {hm(first)} keine Antwort ({e})") from e
+            time.sleep(min(a.intervall, 10))
+
+
 def set_chamber(a, k, t, journal):
-    k.set_setpoint(t)
-    new = k.setpoint()
+    def write_and_check():
+        k.set_setpoint(t)
+        return k.setpoint()
+    new = patiently(a, "Sollwert setzen", write_and_check)
     if abs(new - t) > 0.05:
         raise ProgrammeError(f"Kammer meldet Sollwert {new:+.1f} °C statt {t:+g} °C")
     journal(f"Kammer-Sollwert {t:+g} °C gesetzt")
-    if not k.status() & STATUS_RUNNING:
-        k.start_manual()
+    if not patiently(a, "Status lesen", k.status) & STATUS_RUNNING:
+        patiently(a, "Handbetrieb starten", k.start_manual)
         time.sleep(2)
-        if not k.status() & STATUS_RUNNING:
+        if not patiently(a, "Status lesen", k.status) & STATUS_RUNNING:
             raise ProgrammeError("Kammer läuft nach dem Start des Handbetriebs nicht")
         journal("Handbetrieb gestartet")
 
 
-def wait_stable(a, k, t, run, journal):
-    """Until the chamber has stayed within ±toleranz of t for a.stabil minutes."""
-    path = run / f"{run.name}_klima_T{t:+g}_{time.strftime('%H%M%S')}.txt"
+def open_chamber_log(a, run, s):
+    path = run / f"{run.name}_klima_T{s['soll']:+g}_{time.strftime('%H%M%S')}.txt"
+    log = open(path, "w")
+    log.write(f"# Klimakammer {a.host}, Soll {s['soll']:+g} °C, Toleranz {a.toleranz:g} K, stabil {s['stabil']:g} min "
+              "(Messprogramm; phase warten/messen)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\tphase\n")
+    log.flush()
+    return log
+
+
+def poll(k, log, phase):
+    """One chamber reading into the log: (ist, soll, status) or None after a network error."""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        ist, soll, st = k.actual(), k.setpoint(), k.status()
+    except (SimServError, ValueError, IndexError) as e:
+        log.write(f"{stamp}\t\t\t\t{e}\t{phase}\n")
+        log.flush()
+        return None
+    log.write(f"{stamp}\t{ist:.2f}\t{soll:.2f}\t{st}\t\t{phase}\n")
+    log.flush()
+    return ist, soll, st
+
+
+class ChamberWatch(threading.Thread):
+    """Chamber readings into the step's log while the logger measures."""
+
+    def __init__(self, k, log, interval):
+        super().__init__(daemon=True)
+        self.k, self.log, self.interval = k, log, interval
+        self.halt = threading.Event()
+
+    def run(self):
+        while not self.halt.is_set():
+            poll(self.k, self.log, "messen")
+            self.halt.wait(self.interval)
+
+
+def wait_stable(a, k, s, log, journal):
+    """Until the chamber has stayed within ±toleranz of the setpoint for s['stabil'] minutes."""
+    t, hold = s["soll"], s["stabil"]
     deadline = time.time() + a.max_warten * 3600
     readings, since, last_error, told_errors, told_reached = [], None, None, False, False
-    with open(path, "w") as log:
-        log.write(f"# Klimakammer {a.host}, Soll {t:+g} °C, Toleranz {a.toleranz:g} K, stabil {a.stabil:g} min "
-                  "(Messprogramm)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\n")
-        while True:
-            now = time.time()
-            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
-            if now > deadline:
-                raise ProgrammeError(f"{t:+g} °C nach {a.max_warten:g} h nicht stabil")
-            try:
-                ist, soll, st = k.actual(), k.setpoint(), k.status()
-            except (SimServError, ValueError, IndexError) as e:
-                log.write(f"{stamp}\t\t\t\t{e}\n")
-                log.flush()
-                last_error = last_error or now
-                if now - last_error > 600 and not told_errors:
-                    notify("Kammer nicht erreichbar", f"seit {hm(last_error)}: {e}", a)
-                    told_errors = True
-                time.sleep(a.intervall)
-                continue
-            last_error, told_errors = None, False
-            log.write(f"{stamp}\t{ist:.2f}\t{soll:.2f}\t{st}\t\n")
-            log.flush()
-            if st & STATUS_ALARM:
-                raise ProgrammeError(f"Kammer-Alarm (Status {st}) bei ist {ist:+.1f} °C")
-            if abs(soll - t) > 0.05:
-                raise ProgrammeError(f"Kammer-Sollwert wurde auf {soll:+.1f} °C geändert")
-            readings = [(x, v) for x, v in readings if now - x <= 600] + [(now, ist)]
-            inside = abs(ist - t) <= a.toleranz
-            if inside and since is None:
-                since = now
-                journal(f"{t:+g} °C erreicht (ist {ist:+.1f}), Messung um {hm(now + a.stabil * 60)}, "
-                        f"wenn stabil")
-                if not told_reached:       # once per step, re-entries after overshoot only go to the journal
-                    notify(f"{t:+g} °C erreicht", f"Messung um {hm(now + a.stabil * 60)}, wenn die Kammer "
-                           f"±{a.toleranz:g} K hält", a)
-                    told_reached = True
-            elif not inside and since is not None:
-                journal(f"Toleranz verlassen (ist {ist:+.1f} °C), Haltezeit beginnt neu")
-                since = None
-            line = f"{hm(now)}  ist {ist:+.1f} °C, soll {soll:+.1f} °C"
-            if since is None:
-                r = rate_per_min(readings)
-                if r and (t - ist) * r > 0:
-                    line += f", {r:+.2f} K/min, erreicht ca. {hm(now + (t - ist) / r * 60)}"
-            else:
-                rest = since + a.stabil * 60 - now
-                line += f", stabil seit {(now - since) / 60:.0f} min, Messung in {max(rest, 0) / 60:.0f} min"
-                if rest <= 0:
-                    print(line, flush=True)
-                    return
-            print(line, flush=True)
+    while True:
+        now = time.time()
+        if now > deadline:
+            raise ProgrammeError(f"{t:+g} °C nach {a.max_warten:g} h nicht stabil")
+        reading = poll(k, log, "warten")
+        if reading is None:
+            last_error = last_error or now
+            if now - last_error > 600 and not told_errors:
+                notify("Kammer nicht erreichbar", f"seit {hm(last_error)}, Messprogramm wartet weiter", a)
+                told_errors = True
             time.sleep(a.intervall)
+            continue
+        if told_errors:
+            journal(f"Kammer wieder erreichbar (nicht erreichbar seit {hm(last_error)})")
+        last_error, told_errors = None, False
+        ist, soll, st = reading
+        if st & STATUS_ALARM:
+            raise ProgrammeError(f"Kammer-Alarm (Status {st}) bei ist {ist:+.1f} °C")
+        if abs(soll - t) > 0.05:
+            raise ProgrammeError(f"Kammer-Sollwert wurde auf {soll:+.1f} °C geändert")
+        readings = [(x, v) for x, v in readings if now - x <= 600] + [(now, ist)]
+        inside = abs(ist - t) <= a.toleranz
+        if inside and since is None:
+            since = now
+            what = "Messung" if s["zyklen"] else "Ende der Haltezeit"
+            journal(f"{t:+g} °C erreicht (ist {ist:+.1f}), {what} um {hm(now + hold * 60)}, wenn stabil")
+            if not told_reached and hold >= 5:     # once per step; short holds are not worth a message
+                notify(f"{t:+g} °C erreicht", f"{what} um {hm(now + hold * 60)}, wenn die Kammer "
+                       f"±{a.toleranz:g} K hält", a)
+                told_reached = True
+        elif not inside and since is not None:
+            journal(f"Toleranz verlassen (ist {ist:+.1f} °C), Haltezeit beginnt neu")
+            since = None
+        line = f"{hm(now)}  ist {ist:+.1f} °C, soll {soll:+.1f} °C"
+        if since is None:
+            r = rate_per_min(readings)
+            if r and (t - ist) * r > 0:
+                line += f", {r:+.2f} K/min, erreicht ca. {hm(now + (t - ist) / r * 60)}"
+        else:
+            rest = since + hold * 60 - now
+            line += f", stabil seit {(now - since) / 60:.0f} min, noch {max(rest, 0) / 60:.0f} min"
+            if rest <= 0:
+                print(line, flush=True)
+                return
+        print(line, flush=True)
+        time.sleep(a.intervall)
 
 
-def measure(a, port, run, t, tag, journal):
+def measure(a, port, run, s, journal):
     """One logger step; returns the summary lines. Raises ProgrammeError if the step failed."""
-    cmd = [sys.executable, "-u", str(LOGGER), "--laeufe", str(a.laeufe), "stufe", f"{t:g}", "--lauf", str(run),
-           "--port", port, "--netzteil", a.netzteil, "--netzteil-baud", str(a.netzteil_baud),
-           "--keine-bemerkung", "--zyklen", str(a.zyklen), "--ein", f"{a.ein:g}", "--aus", f"{a.aus:g}"]
-    if tag:
-        cmd += ["--tag", tag]
+    cmd = [sys.executable, "-u", str(LOGGER), "--laeufe", str(a.laeufe), "stufe", f"{s['soll']:g}",
+           "--lauf", str(run), "--port", port, "--netzteil", a.netzteil, "--netzteil-baud", str(a.netzteil_baud),
+           "--keine-bemerkung", "--zyklen", str(s["zyklen"]), "--ein", f"{s['ein']:g}", "--aus", str(s["aus"]),
+           "--strom-dicht", f"{a.strom_dicht:g}"]
+    if s["tag"]:
+        cmd += ["--tag", s["tag"]]
     if a.kein_push:
         cmd.append("--kein-push")
-    journal(f"Messung {t:+g} °C" + (f" ({tag})" if tag else "") + " beginnt")
+    journal(f"Messung {step_name(s)} beginnt: {s['zyklen']} × {s['ein']:g} s ein / {s['aus']} s aus, "
+            f"ca. {step_minutes(s):.0f} min")
     proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     out = b""
     try:
@@ -217,7 +318,7 @@ def measure(a, port, run, t, tag, journal):
         journal("  " + line)
     if code:
         tail = [l for l in text.splitlines() if l.strip()][-1:] or ["?"]
-        raise ProgrammeError(f"Messung {t:+g} °C fehlgeschlagen (Code {code}): {tail[0]}")
+        raise ProgrammeError(f"Messung {step_name(s)} fehlgeschlagen (Code {code}): {tail[0]}")
     return summary
 
 
@@ -247,8 +348,11 @@ def show_status(argv):
         klima = sorted(j.parent.glob("*_klima_T*.txt"), key=lambda p: p.stat().st_mtime)
         if klima:
             rows = [l.split("\t") for l in klima[-1].read_text(errors="replace").splitlines() if not l.startswith("#")]
-            if rows and len(rows[-1]) >= 3:
-                print(f"\nLetzte Kammerabfrage {rows[-1][0][11:19]}: ist {rows[-1][1]} °C, soll {rows[-1][2]} °C")
+            good = [r for r in rows if len(r) >= 3 and r[1]]
+            if good:
+                print(f"\nLetzte Kammerabfrage {good[-1][0][11:19]}: ist {good[-1][1]} °C, soll {good[-1][2]} °C")
+            if rows and len(rows[-1]) >= 5 and not rows[-1][1]:
+                print(f"Letzter Fehler {rows[-1][0][11:19]}: {rows[-1][4]}")
     else:
         print("Kein Programm-Log gefunden.")
     try:
@@ -261,16 +365,21 @@ def show_status(argv):
 def main():
     if sys.argv[1:2] == ["status"]:
         return show_status(sys.argv[2:])
-    steps, argv = split_steps(sys.argv[1:])
+    cli_steps, argv = split_steps(sys.argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-                                 usage="%(prog)s TEMPERATUR[:tag] ... [Optionen]")
+                                 usage="%(prog)s TEMPERATUR[:tag] ... [Optionen]  |  %(prog)s --plan DATEI [Optionen]")
+    ap.add_argument("--plan", help="Plan-Datei mit Werten je Stufe (Format oben)")
     ap.add_argument("--stabil", type=float, default=30, help="Minuten innerhalb der Toleranz vor jeder Messung (Standard 30)")
     ap.add_argument("--toleranz", type=float, default=1.0, help="K um den Sollwert (Standard 1)")
     ap.add_argument("--max-warten", type=float, default=6, help="Stunden je Stufe bis zum Abbruch (Standard 6)")
+    ap.add_argument("--netz-geduld", type=float, default=15,
+                    help="Minuten, die Netzfehler beim Setzen des Sollwerts wiederholt werden (Standard 15)")
     ap.add_argument("--intervall", type=float, default=30, help="Sekunden zwischen Kammerabfragen (Standard 30)")
     ap.add_argument("--zyklen", type=int, default=3)
     ap.add_argument("--ein", type=float, default=20, help="Sekunden Netzteil ein je Zyklus (Standard 20)")
-    ap.add_argument("--aus", type=float, default=10, help="Sekunden Netzteil aus je Zyklus (Standard 10)")
+    ap.add_argument("--aus", default="10", help="Sekunden Netzteil aus je Zyklus (Standard 10), auch Liste 10,20,40")
+    ap.add_argument("--strom-dicht", type=float, default=12,
+                    help="die ersten so viele Sekunden jeder EIN-Phase Strom alle 0,5 s lesen (Standard 12)")
     ap.add_argument("--neu", action="store_true", help="neuen Laufordner anlegen, sonst der neueste")
     ap.add_argument("--personen")
     ap.add_argument("--seriennummer")
@@ -288,9 +397,21 @@ def main():
     ap.add_argument("--netzteil-baud", type=int, default=PSU_BAUD, help=argparse.SUPPRESS)
     ap.add_argument("--laeufe", type=Path, default=RUNS_DIR, help=argparse.SUPPRESS)   # tests only
     a = ap.parse_args(argv)
+    try:
+        parse_off_times(a.aus)
+    except ValueError:
+        ap.error(f"--aus: keine Zahl(en): {a.aus}")
+    if a.plan and cli_steps:
+        ap.error("entweder Temperaturen oder --plan, nicht beides")
+    try:
+        steps = (read_plan(a.plan, a) if a.plan else
+                 [{"soll": t, "tag": tag, "stabil": a.stabil, "zyklen": a.zyklen, "ein": a.ein, "aus": a.aus}
+                  for t, tag in cli_steps])
+    except (ProgrammeError, OSError) as e:
+        sys.exit(str(e))
     if not steps:
         ap.error("keine Temperaturen angegeben, z. B.: ./programm 20 -40 -70 20")
-    bad = [t for t, _ in steps if not T_MIN <= t <= T_MAX]
+    bad = [s["soll"] for s in steps if not T_MIN <= s["soll"] <= T_MAX]
     if bad:
         sys.exit(f"außerhalb {T_MIN:+g} … {T_MAX:+g} °C: {', '.join(f'{t:+g}' for t in bad)}")
     stop_on_sigterm()
@@ -300,10 +421,15 @@ def main():
         port = preflight(a, k)
     except ProgrammeError as e:
         sys.exit(f"Nicht gestartet: {e}")
-    plan = "  ".join(f"{t:+g}" + (f":{tag}" if tag else "") for t, tag in steps)
-    print(f"\nProgramm: {plan} °C\nJe Stufe: {a.stabil:g} min stabil (±{a.toleranz:g} K), dann {a.zyklen} × "
-          f"{a.ein:g} s ein / {a.aus:g} s aus, Netzteil 5,00 V automatisch"
-          + ("" if a.kein_push else ", Push nach jeder Stufe"))
+    plan = "  ".join(f"{s['soll']:+g}" + (f":{s['tag']}" if s["tag"] else "") for s in steps)
+    print(f"\nProgramm ({len(steps)} Stufen, Toleranz ±{a.toleranz:g} K, Netzteil 5,00 V automatisch"
+          + ("" if a.kein_push else ", Push nach jeder Stufe") + "):")
+    for i, s in enumerate(steps, 1):
+        what = (f"{s['zyklen']} × {s['ein']:g} s ein / {s['aus']} s aus, Messung ca. {step_minutes(s):.0f} min"
+                if s["zyklen"] else "nur halten")
+        print(f"  {i:2d}. {step_name(s):<22} stabil {s['stabil']:g} min, {what}")
+    total = sum(s["stabil"] + step_minutes(s) for s in steps) / 60
+    print(f"Summe Haltezeiten und Messungen: {total:.1f} h, dazu die Kammerfahrten")
     print("Laufordner: " + ("neu" if a.neu else pick_run(a).name))
     if not a.ja and input("Programm starten? [j/N] ").strip().lower() != "j":
         sys.exit("Nicht gestartet.")
@@ -319,23 +445,32 @@ def main():
         a.lauf = None
     run = pick_run(a)
     journal = Journal(run / f"{run.name}_programm_{time.strftime('%H%M%S')}.txt")
-    journal(f"Programm {plan} °C, stabil {a.stabil:g} min ±{a.toleranz:g} K, "
-            f"{a.zyklen} × {a.ein:g}/{a.aus:g} s, PID {os.getpid()}")
+    journal(f"Programm {plan} °C, toleranz ±{a.toleranz:g} K" + (f", Plan {a.plan}" if a.plan else
+            f", stabil {a.stabil:g} min, {a.zyklen} × {a.ein:g}/{a.aus} s") + f", PID {os.getpid()}")
     if not a.still:
         print(f"Hinweise aufs Handy über ntfy-Thema {a.ntfy}" if a.ntfy else "Kein ntfy-Thema: nur Mac-Mitteilungen")
     try:
-        for i, (t, tag) in enumerate(steps, 1):
-            name = f"{t:+g} °C" + (f" ({tag})" if tag else "")
-            journal(f"Stufe {i}/{len(steps)}: {name}")
-            if abs(k.setpoint() - t) > 0.05:
-                set_chamber(a, k, t, journal)
-            wait_stable(a, k, t, run, journal)
-            summary = measure(a, port, run, t, tag, journal)
+        for i, s in enumerate(steps, 1):
+            journal(f"Stufe {i}/{len(steps)}: {step_name(s)}")
+            if abs(patiently(a, "Sollwert lesen", k.setpoint) - s["soll"]) > 0.05:
+                set_chamber(a, k, s["soll"], journal)
+            with open_chamber_log(a, run, s) as log:
+                wait_stable(a, k, s, log, journal)
+                nxt = f" Weiter mit {step_name(steps[i])}." if i < len(steps) else ""
+                if not s["zyklen"]:
+                    journal(f"Haltezeit {step_name(s)} beendet")
+                    continue
+                watch = ChamberWatch(k, log, a.intervall)
+                watch.start()
+                try:
+                    summary = measure(a, port, run, s, journal)
+                finally:
+                    watch.halt.set()
+                    watch.join(timeout=15)
             result = "; ".join(l for l in summary if not l.startswith(("Strom", "Nicht gepusht")))
-            nxt = f" Weiter mit {steps[i][0]:+g} °C." if i < len(steps) else ""
-            notify(f"Stufe {name} gemessen", f"{result}{nxt}", a)
+            notify(f"Stufe {step_name(s)} gemessen", f"{result}{nxt}", a)
         journal("Programm fertig")
-        notify("Messprogramm fertig", f"{plan} °C, Kammer-Sollwert bleibt {steps[-1][0]:+g} °C", a)
+        notify("Messprogramm fertig", f"{plan} °C, Kammer-Sollwert bleibt {steps[-1]['soll']:+g} °C", a)
     except (ProgrammeError, SimServError) as e:
         journal(f"ABBRUCH: {e}")
         notify("Messprogramm abgebrochen", f"{e}. Netzteil aus, Kammer-Sollwert unverändert.", a)

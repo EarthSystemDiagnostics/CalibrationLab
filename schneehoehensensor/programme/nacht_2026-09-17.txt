@@ -1,0 +1,17 @@
+# Messprogramm MB7574, Nacht 17./18.09.2026, ca. 20 h. Start bei ca. -45 °C.
+# Fragen: (1) wie kurz messen: 20 s EIN / 160 s AUS, jeder Zyklus ein Kaltstart;
+#         (2) übersteht er -70 °C: 100 Kaltstarts bei -70 °C, Warm-Checks bei +20 °C
+#             nach der ersten Kälte und nach -70 °C (R0500 seit 17.09. nur kalt, Zyklus 1, 10-15 s).
+# Aufruf: ./programm --plan programme/nacht_2026-09-17.txt --neu --personen ... --seriennummer MB7574-01
+#
+# soll[:tag]  stabil_min  zyklen  ein_s  aus_s
+-50:abkling   10          8       20     10,20,40,80,160,320,640   # Abklingen der Eigenerwärmung
+-50           0           20      20     160
+20:warm1      30          20      20     160                       # Warm-Check nach -50 °C
+-60           30          20      20     160
+-65           30          20      20     160                       # Klemmen der Kompensation, erwartet ca. 977 mm
+-70:dauer     30          80      20     160                       # 4 h Kaltstarts bei -70 °C
+20:warm2      30          20      20     160                       # Warm-Check nach -70 °C
+-70:zyk       30          20      20     160                       # zweiter Kälteblock
+-40           15          20      20     160
+20:ende       60          20      20     160                       # Rückkehr, Vergleich mit warm1/warm2

@@ -62,7 +62,8 @@ def test_programme_runs_all_steps():
     s = subprocess.run([sys.executable, str(SCRIPT), "status", "--laeufe", str(laeufe), "--host", "127.0.0.1",
                         "--port-kammer", str(srv2.server_address[1])], capture_output=True, text=True, timeout=30)
     srv2.shutdown()
-    assert s.returncode == 0 and "Kein Messprogramm läuft" in s.stdout and "Programm fertig" in s.stdout, s.stdout + s.stderr
+    # "läuft" depends on other programmes on this machine, only the log part is checked
+    assert s.returncode == 0 and "Programm fertig" in s.stdout, s.stdout + s.stderr
     assert "Kammer jetzt: ist -10.0 °C, soll -10.0 °C" in s.stdout and "Letzte Kammerabfrage" in s.stdout, s.stdout
 
 
@@ -119,11 +120,76 @@ def test_stability_timer_restarts_outside_tolerance():
         status = staticmethod(lambda: 3)
 
     events = []
-    a = types.SimpleNamespace(host="sim", toleranz=1.0, stabil=0.01, max_warten=1, intervall=0.05, still=True, ntfy=None)
-    run = Path(tempfile.mkdtemp(prefix="programm_")) / "kammer_MB7574_20260917-180000"
-    run.mkdir()
-    mod.wait_stable(a, Chamber, -40.0, run, events.append)
+    a = types.SimpleNamespace(host="sim", toleranz=1.0, max_warten=1, intervall=0.05, still=True, ntfy=None)
+    step = {"soll": -40.0, "tag": "", "stabil": 0.01, "zyklen": 3, "ein": 20, "aus": "10"}
+    log_path = Path(tempfile.mkdtemp(prefix="programm_")) / "klima.txt"
+    with open(log_path, "w") as log:
+        mod.wait_stable(a, Chamber, step, log, events.append)
     assert [e.split(" ")[0] for e in events] == ["-40", "Toleranz", "-40"], events
+    assert log_path.read_text().splitlines()[0].endswith("\twarten")
+
+
+def test_plan_file_steps_hold_and_off_time_list():
+    # plan: +20 measure with off-times 0.5,1 (3 cycles), hold-only step, then -10 with defaults
+    srv, supply, sensor, stop = hardware()
+    laeufe = Path(tempfile.mkdtemp(prefix="programm_"))
+    plan = laeufe / "plan.txt"
+    plan.write_text("# soll stabil zyklen ein aus\n"
+                    "20:liste   0.02  3  1.5  0.5,1   # Kommentar\n"
+                    "\n"
+                    "20:halten  0.02  0\n"
+                    "-10        -     -  -    -\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--plan", str(plan), "--host", "127.0.0.1",
+                        "--port-kammer", str(srv.server_address[1]), "--port", sensor, "--netzteil", supply.port,
+                        "--laeufe", str(laeufe), "--stabil", "0.02", "--intervall", "0.2", "--zyklen", "2",
+                        "--ein", "1.5", "--aus", "0.5", "--ja", "--still", "--kein-push", "--neu"],
+                       capture_output=True, text=True, timeout=180)
+    stop.set(); srv.shutdown()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "nur halten" in r.stdout and "Haltezeit +20 °C (halten) beendet" in r.stdout, r.stdout
+    (lauf,) = [p for p in laeufe.iterdir() if p.is_dir()]
+    with open(lauf / f"{lauf.name}_zusammenfassung.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [(x["soll_C"], x["tag"], x["zyklen"]) for x in rows] == [("20", "liste", "3"), ("-10", "", "2")], rows
+    step_log = (lauf / rows[0]["datei"]).read_text().splitlines()
+    ons = [float(l.split("\t")[1]) for l in step_log if "Netzteil EIN (automatisch)" in l]
+    offs = [float(l.split("\t")[1]) for l in step_log if "Netzteil AUS (automatisch)" in l]
+    gaps = [round(on - off, 1) for off, on in zip(offs, ons[1:])]
+    assert len(gaps) == 2 and abs(gaps[0] - 0.5) < 0.3 and abs(gaps[1] - 1.0) < 0.3, gaps
+    phases = [l.rsplit("\t", 1)[-1] for f in lauf.glob("*_klima_T-10_*.txt")
+              for l in f.read_text().splitlines() if not l.startswith("#")]
+    assert "warten" in phases and "messen" in phases, phases
+
+
+def test_bad_plan_file_refused():
+    plan = Path(tempfile.mkdtemp(prefix="programm_")) / "plan.txt"
+    plan.write_text("-40  30  x  20  10\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--plan", str(plan)], capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "Zeile 1" in r.stderr, r.stderr
+
+
+def test_setpoint_write_retried_after_network_error():
+    spec = importlib.util.spec_from_file_location("programm", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    calls = {"n": 0}
+
+    class Chamber:
+        soll = 20.0
+
+        @classmethod
+        def set_setpoint(cls, t):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise mod.SimServError("keine Verbindung (Test)")
+            cls.soll = t
+        setpoint = classmethod(lambda cls: cls.soll)
+        status = staticmethod(lambda: 3)
+
+    a = types.SimpleNamespace(netz_geduld=1, intervall=0.05)
+    events = []
+    mod.set_chamber(a, Chamber, -40.0, events.append)
+    assert calls["n"] == 3 and Chamber.soll == -40.0 and events == ["Kammer-Sollwert -40 °C gesetzt"], (calls, events)
 
 
 def _run_all():

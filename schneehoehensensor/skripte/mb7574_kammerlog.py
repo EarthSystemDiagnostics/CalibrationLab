@@ -60,6 +60,7 @@ NEAR = 500                # R0500 = smallest reported distance, closer echoes (d
 MIN_VALUES_PER_CYCLE = 3
 LIMIT_MEDIAN_PCT = 2.0    # median of cycle 1 against the reference step
 LIMIT_CURRENT_PCT = 20.0
+CURRENT_FROM_S = 10.0     # strom_mA: median of the supply readings from this time after switching on
 
 # median_z1_mm and drift_mm appended 2026-09-14; since then abw_ref_pct compares medians of cycle 1.
 # n_500 appended 2026-09-17; since then R0500 no longer counts as a value (before: in n_werte).
@@ -237,15 +238,32 @@ class SensorReader(threading.Thread):
                     self.last = text
 
 
-def countdown(seconds, label, reader, sample=None, every=6.0):
-    """Wait with a status line; call sample() 2 s into the phase (half-way if shorter),
-    then every few seconds."""
-    end = time.time() + seconds
-    next_sample = time.time() + min(2.0, seconds / 2)
+def parse_off_times(text):
+    return [float(x) for x in str(text).split(",") if x.strip()]
+
+
+def off_times_arg(text):
+    try:
+        times = parse_off_times(text)
+    except ValueError:
+        times = []
+    if not times or min(times) < 0:
+        raise argparse.ArgumentTypeError(f"Aus-Zeit(en) in s, z. B. 10 oder 10,20,40: {text!r}")
+    return str(text)
+
+
+def countdown(seconds, label, reader, sample=None, every=6.0, dense_until=0.0, dense_every=0.5):
+    """Wait with a status line. sample(elapsed) runs every dense_every seconds during the first
+    dense_until seconds of the phase, then every `every` seconds; without a dense window the
+    first call is 2 s into the phase (half-way if shorter)."""
+    start = time.time()
+    end = start + seconds
+    next_sample = start + (min(dense_every, seconds / 2) if dense_until > 0 else min(2.0, seconds / 2))
     while (rest := end - time.time()) > 0:
         if sample and time.time() >= next_sample and rest > 0.3:
-            sample()
-            next_sample = time.time() + every
+            elapsed = time.time() - start
+            sample(elapsed)
+            next_sample = time.time() + (dense_every if elapsed < dense_until else every)
         print(f"\r  {label}: noch {rest:3.0f} s   letzte Zeile: {reader.last[:20]:<20}", end="", flush=True)
         time.sleep(min(0.25, rest))
     print()
@@ -388,14 +406,15 @@ def cmd_step(a):
 
     with serial.Serial(port, 9600, timeout=0.2) as ser, open(log_path, "w") as log:
         log.write(f"# MB7574 Kammertest, Lauf {run.name}, Soll {a.soll:+g} °C, Tag '{a.tag}', Port {port}, "
-                  f"{a.zyklen} Zyklen je {a.ein:g} s ein / {a.aus:g} s aus"
+                  f"{a.zyklen} Zyklen je {a.ein:g} s ein / {a.aus} s aus"
                   + (f", Netzteil automatisch {a.netzteil} ({ident}), 5.00 V / 0.15 A" if psu else "") + "\n"
                   "# zeit\tt_s\tzyklus\tphase\tzeile\n")
         reader = SensorReader(ser, log)
         reader.start()
-        amps = []
+        amps = []                   # (seconds since on, amps)
+        off_times = parse_off_times(a.aus)
 
-        def sample():
+        def sample(elapsed):
             try:
                 volts, a_now = psu.measure()
             except SupplyError as e:
@@ -403,7 +422,7 @@ def cmd_step(a):
                 if "über" in str(e):
                     raise          # overvoltage: output is already off, stop the step
                 return
-            amps.append(a_now)
+            amps.append((elapsed, a_now))
             reader.note(reader.cycle, reader.phase, f"# Netzteil {volts:.1f} V {a_now * 1000:.0f} mA")
 
         print(f"Lauf: {run.name}\nLog:  {log_path.name}\n"
@@ -419,7 +438,7 @@ def cmd_step(a):
                 else:
                     reader.note(k, "EIN", "# Ansage Netzteil EIN")
                     print(f"\a\nZyklus {k}/{a.zyklen}: Netzteil EIN" + ("   (Strom ablesen)" if k == 1 else ""))
-                countdown(a.ein, "EIN", reader, sample if psu else None)
+                countdown(a.ein, "EIN", reader, sample if psu else None, dense_until=a.strom_dicht)
                 reader.phase = "AUS"
                 if psu:
                     psu.off()
@@ -429,7 +448,7 @@ def cmd_step(a):
                     reader.note(k, "AUS", "# Ansage Netzteil AUS")
                     print(f"\aZyklus {k}/{a.zyklen}: Netzteil AUS")
                 if k < a.zyklen:
-                    countdown(a.aus, "AUS", reader)
+                    countdown(off_times[(k - 1) % len(off_times)], "AUS", reader)
                 else:
                     time.sleep(1)       # last cycle: no off-time needed, only catch the final line
         finally:
@@ -441,8 +460,11 @@ def cmd_step(a):
         reader.halt.set()
         reader.join()
         if psu:
-            current_text = fmt(1000 * statistics.median(amps) if amps else None)
-            print(f"\nStrom laut Netzteil: {current_text or '-'} mA (Median aus {len(amps)} Ablesungen, Auflösung 10 mA)")
+            # the current changes about 8 s after switching on (60 -> 100 mA at -50 C): median from 10 s on
+            late = [x for t_on, x in amps if t_on >= CURRENT_FROM_S] or [x for _, x in amps]
+            current_text = fmt(1000 * statistics.median(late) if late else None)
+            print(f"\nStrom laut Netzteil: {current_text or '-'} mA (Median aus {len(late)} Ablesungen "
+                  f"ab {CURRENT_FROM_S:g} s nach EIN, Auflösung 10 mA)")
             remark = "" if a.keine_bemerkung else input("Bemerkung: ").strip()
         else:
             current_text = input("\nStrom während EIN in mA (leer = nicht abgelesen): ").strip()
@@ -538,7 +560,10 @@ def main():
     st.add_argument("--tag", default="", help="Zusatz im Dateinamen, z. B. tisch, 60min, wdh, ende")
     st.add_argument("--zyklen", type=int, default=3)
     st.add_argument("--ein", type=float, default=20, help="Sekunden Netzteil ein (Standard 20)")
-    st.add_argument("--aus", type=float, default=10, help="Sekunden Netzteil aus (Standard 10)")
+    st.add_argument("--aus", default="10", type=off_times_arg,
+                    help="Sekunden Netzteil aus (Standard 10); Liste wie 10,20,40 gilt der Reihe nach je Zyklus")
+    st.add_argument("--strom-dicht", type=float, default=12,
+                    help="die ersten so viele Sekunden jeder EIN-Phase Strom alle 0,5 s lesen (Standard 12, 0 = aus)")
     st.add_argument("--port", help="Sensor-Port, Standard: das TTL-232R-Kabel")
     st.add_argument("--netzteil", nargs="?", const=PSU_PORT,
                     help=f"Netzteil EX355P selbst schalten und Strom lesen (Port, Standard {PSU_PORT})")
