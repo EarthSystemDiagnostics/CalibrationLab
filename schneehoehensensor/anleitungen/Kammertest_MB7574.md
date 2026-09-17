@@ -36,7 +36,7 @@ pwd
 
 ## Klimakammer
 
-Die Weiss ClimeEvent lässt sich vom Labor-Mac über das LAN-Kabel abfragen und setzen (Kammer 172.168.225.202, Mac 172.168.225.10). Dafür ein zweites Terminal-Fenster öffnen (Cmd-N) und dort ebenfalls `cd ~/CalibrationLab/schneehoehensensor`.
+Die Weiss ClimeEvent lässt sich vom Labor-Mac über das LAN-Kabel abfragen und setzen (Kammer 172.168.225.202, Mac 172.168.225.11 an `en7`, Dienst „USB 10/100/1000 LAN“; fehlt die Adresse: `sudo networksetup -setmanual "USB 10/100/1000 LAN" 172.168.225.11 255.255.255.0`). Dafür ein zweites Terminal-Fenster öffnen (Cmd-N) und dort ebenfalls `cd ~/CalibrationLab/schneehoehensensor`.
 
 ```
 ./klima status
@@ -68,6 +68,19 @@ Die Weiss ClimeEvent lässt sich vom Labor-Mac über das LAN-Kabel abfragen und 
 - **`--netzteil`** hinter der Temperatur, z. B. `./kammer stufe -40 --netzteil`: Das Skript schaltet das Netzteil EX355P selbst (Delock-Adapter `/dev/cu.usbserial-FT3GCNKB0`, 9600 Baud), setzt 5,00 V und 0,15 A, liest den Strom mehrmals je EIN-Phase (Auflösung 10 mA) und schaltet am Ende und bei Ctrl-C aus. Am Netzteil leuchtet dann „Remote“, die Knöpfe sind gesperrt; zum Bedienen von Hand „Go to Local“ drücken. An der echten Hardware noch nicht erprobt.
 - Eine laufende Stufe bricht Ctrl-C ab; danach mit `--tag wdh` wiederholen. Hilfe: `./kammer stufe --help`.
 
+## Messprogramm (automatisch)
+
+```
+./programm 20 -40 -50 -60 -70 -70:60min 20:ende --neu --personen "…" --seriennummer MB7574-01
+```
+
+- Für jede Temperatur: Kammer-Sollwert setzen, warten bis die Kammer `--stabil` Minuten (Standard 30) ununterbrochen innerhalb ±`--toleranz` K (Standard 1) liegt, dann eine Stufe wie `./kammer stufe … --netzteil` messen und pushen. Verlässt die Kammer das Band, beginnt die Haltezeit neu. `-70:60min` misst nach weiteren 30 min erneut, mit Tag `60min`.
+- Vorher prüft es nur lesend Kammer, Netzteil und Sensor-Port und fragt einmal „Programm starten? [j/N]“. Ohne `--neu` misst es in den neuesten Laufordner.
+- Meldungen (Mac und ntfy) nach jeder Stufe mit Median von Zyklus 1 und Auffälligkeiten, am Ende und bei Abbruch.
+- Abbruch mit Meldung: Kammer-Alarm, nach `--max-warten` Stunden (Standard 6) nicht stabil, Sollwert am Panel geändert, Messung fehlgeschlagen (Netzteil, Überspannung). Das Netzteil ist dann aus, der Kammer-Sollwert bleibt. „AUFFÄLLIG“ allein bricht nicht ab.
+- Stoppen: Ctrl-C, oder `kill <PID>` (PID steht in der ersten Zeile von `…_programm_….txt`). Ereignisse stehen in `…_programm_….txt`, Kammerwerte in `…_klima_T….txt`.
+- Per SSH ohne offenes Fenster starten: `nohup ./programm … --ja > /tmp/programm.out 2>&1 &`, verfolgen mit `tail -f /tmp/programm.out`.
+
 ## Ablauf
 
 Zwischen den Messungen bleibt der Sensor stromlos: im Dauerbetrieb heizt er sich mit 0,34 W über die Kammertemperatur. Jedes Einschalten ist damit ein Kaltstart.
@@ -79,7 +92,7 @@ Zwischen den Messungen bleibt der Sensor stromlos: im Dauerbetrieb heizt er sich
 
 ## Ausfall und Auffälligkeiten
 
-Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), ungültige Zeilen, Median von Zyklus 1 mehr als 2 % und Strom mehr als 20 % neben dem Bezug. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
+Das Skript meldet als auffällig: Zyklen ohne Kopfzeile oder mit weniger als drei Werten, R5000 (kein Echo), R0500 (Echo näher als 50 cm; beides zählt nicht als Wert), ungültige Zeilen, Median von Zyklus 1 mehr als 2 % und Strom mehr als 20 % neben dem Bezug. Selbst ansehen: nur der Minimalwert, springende Werte (min/max).
 
 Steigt der Median von Zyklus 1 unterhalb −40 °C stetig um etwa 0,2 % je K, misst der Sensor weiter, aber seine interne Temperaturkompensation folgt der Kammer nicht mehr. Das als Bemerkung eingeben und weitermachen.
 

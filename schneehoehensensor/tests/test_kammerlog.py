@@ -38,7 +38,7 @@ def run(laeufe, *args, stdin=""):
 
 def step(laeufe, soll, value, stdin):
     """One step with a simulated sensor: 3 cycles of 2 s on / 1 s off.
-    Cycle 3 carries one garbled line and one R5000 among five readings."""
+    Cycle 3 carries one garbled line, one R5000 and one R0500 among six readings."""
     master, slave = pty.openpty()
     name = os.ttyname(slave)
     os.close(slave)          # the logger refuses a port another process holds open
@@ -48,12 +48,14 @@ def step(laeufe, soll, value, stdin):
         for k in range(3):
             time.sleep(max(0, t0 + 3.0 + 3 * k - time.time()))
             os.write(master, HEADER)
-            for i in range(5):
-                time.sleep(0.35)
+            for i in range(6):
+                time.sleep(0.3)
                 if k == 2 and i == 1:
                     os.write(master, b"\xf3\x81R0\r")
                 elif k == 2 and i == 2:
                     os.write(master, b"R5000\r")
+                elif k == 2 and i == 3:
+                    os.write(master, b"R0500\r")
                 else:
                     os.write(master, f"R{value:04d}\r".encode())
 
@@ -288,7 +290,8 @@ def test_new_step_summary_and_close():
     assert [x["abw_ref_pct"] for x in rows] == ["0.00", "2.22"], rows
     last = rows[1]
     assert (last["zyklen_mit_daten"], last["zyklen_mit_kopfzeile"]) == ("3", "3"), last
-    assert (last["n_werte"], last["n_5000"], last["n_ungueltig"]) == ("13", "1", "1"), last
+    assert (last["n_werte"], last["n_5000"], last["n_500"], last["n_ungueltig"]) == ("15", "1", "1", "1"), last
+    assert "1 × R0500 (Echo näher als 50 cm)" in r.stdout and last["min_mm"] == "830", r.stdout
     assert (last["median_z1_mm"], last["drift_mm"]) == ("830", "0"), last
     assert (last["strom_mA"], last["bemerkung"]) == ("90.5", "Test Komma"), last
     assert last["datei"].startswith(f"{lauf.name}_T-40_") and (lauf / last["datei"]).exists()

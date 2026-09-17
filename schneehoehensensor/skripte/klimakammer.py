@@ -6,7 +6,7 @@
     ./klima stufe -40            set the setpoint, wait until reached, hold 30 min, notify
     ./klima warten -40           like stufe, without touching the setpoint
 
-The chamber must be reachable from this Mac (LAN adapter 172.168.225.10/24, chamber
+The chamber must be reachable from this Mac (lab Mac: LAN adapter en7 172.168.225.11/24, chamber
 172.168.225.202, no gateway). SimServ: fields separated by byte 0xB6 (latin-1),
 'command, chamber 1, parameters' + CR; answer '1', fields + CRLF; one TCP connection
 per command. Read: 11004 actual, 11002 setpoint (control variable 1 = temperature,

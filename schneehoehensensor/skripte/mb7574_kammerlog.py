@@ -35,6 +35,7 @@ import datetime as dt
 import glob
 import os
 import re
+import signal
 import statistics
 import subprocess
 import sys
@@ -55,14 +56,16 @@ VALUE = re.compile(r"^R(\d{4})$")                         # distance in mm
 STRAY_BYTES = bytes(range(0, 32)) + bytes(range(127, 256))  # control and non-ASCII bytes
 CONTROL_CHARS = "".join(map(chr, range(32)))
 NO_ECHO = 5000            # R5000 = no target in the beam
+NEAR = 500                # R0500 = smallest reported distance, closer echoes (datasheet 12593)
 MIN_VALUES_PER_CYCLE = 3
 LIMIT_MEDIAN_PCT = 2.0    # median of cycle 1 against the reference step
 LIMIT_CURRENT_PCT = 20.0
 
 # median_z1_mm and drift_mm appended 2026-09-14; since then abw_ref_pct compares medians of cycle 1.
+# n_500 appended 2026-09-17; since then R0500 no longer counts as a value (before: in n_werte).
 SUMMARY_COLUMNS = ["start", "soll_C", "tag", "zyklen", "zyklen_mit_daten", "zyklen_mit_kopfzeile",
                    "n_werte", "n_5000", "n_ungueltig", "median_mm", "min_mm", "max_mm",
-                   "abw_ref_pct", "strom_mA", "bemerkung", "datei", "median_z1_mm", "drift_mm"]
+                   "abw_ref_pct", "strom_mA", "bemerkung", "datei", "median_z1_mm", "drift_mm", "n_500"]
 
 NOTES_TEMPLATE = ("# Notizen {name}\n\n"
                   "Laborbuch: LB Schneehöhensensor 1, S. \n\n"
@@ -88,6 +91,19 @@ def git_state(path):
         return commit, ("yes" if dirty else "no")
     except (OSError, subprocess.SubprocessError):
         return "unknown", "unknown"
+
+
+def stop_on_sigterm():
+    """kill (SIGTERM) and Ctrl-C both end the script through KeyboardInterrupt, so the finally
+    blocks switch the supply off. SIGINT is re-armed too: a process started in the background
+    by a non-interactive shell inherits SIGINT as ignored. Further signals are ignored, so a
+    second Ctrl-C cannot interrupt the switching off."""
+    def interrupt(signum, frame):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGINT, interrupt)
+    signal.signal(signal.SIGTERM, interrupt)
 
 
 def push_run(run, message):
@@ -237,6 +253,7 @@ def countdown(seconds, label, reader, sample=None, every=6.0):
 
 def evaluate(lines, cycles):
     values, n_no_echo, invalid, with_data, with_header, per_cycle = [], 0, 0, 0, 0, []
+    n_near = 0
     for k in range(1, cycles + 1):
         values_k, header = [], False
         for _, ascii_only, text in (x for x in lines if x[0] == k):
@@ -245,6 +262,8 @@ def evaluate(lines, cycles):
                 mm = int(m.group(1))
                 if mm >= NO_ECHO:
                     n_no_echo += 1
+                elif mm <= NEAR:
+                    n_near += 1
                 else:
                     values_k.append(mm)
             elif not ascii_only or re.match(r"^R\d", text):
@@ -255,7 +274,7 @@ def evaluate(lines, cycles):
         with_data += len(values_k) >= MIN_VALUES_PER_CYCLE
         values += values_k
         per_cycle.append(values_k)
-    return values, n_no_echo, invalid, with_data, with_header, per_cycle
+    return values, n_no_echo, n_near, invalid, with_data, with_header, per_cycle
 
 
 def cycle_stats(per_cycle):
@@ -277,7 +296,7 @@ def cycles_from_log(path):
             k = int(parts[2])
             n_cycles = max(n_cycles, k)
             m = VALUE.match(parts[4].strip(CONTROL_CHARS))
-            if k and m and int(m.group(1)) < NO_ECHO:
+            if k and m and NEAR < int(m.group(1)) < NO_ECHO:
                 per_cycle.setdefault(k, []).append(int(m.group(1)))
     return [per_cycle.get(k, []) for k in range(1, n_cycles + 1)]
 
@@ -321,9 +340,10 @@ def cmd_new(a):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     run = a.laeufe / f"{EXPERIMENT}_{stamp}"
     run.mkdir(parents=True)
-    persons = input("Personen: ").strip()
-    serial_no = input("Seriennummer MB7574: ").strip()
-    description = input("Beschreibung (Kammer, Ziel, Besonderheiten): ").strip()
+    persons = a.personen if a.personen is not None else input("Personen: ").strip()
+    serial_no = a.seriennummer if a.seriennummer is not None else input("Seriennummer MB7574: ").strip()
+    description = (a.beschreibung if a.beschreibung is not None
+                   else input("Beschreibung (Kammer, Ziel, Besonderheiten): ").strip())
     commit, dirty = git_state(PROJECT_DIR)
     with open(run / f"{run.name}_meta.txt", "w") as m:
         m.write(f"Experiment       : {EXPERIMENT}\n"
@@ -429,7 +449,7 @@ def cmd_step(a):
             remark = input("Bemerkung: ").strip()
         reader.note(0, "-", f"# Strom {current_text or '-'} mA; Bemerkung: {remark}")
 
-    values, n_no_echo, invalid, with_data, with_header, per_cycle = evaluate(reader.lines, a.zyklen)
+    values, n_no_echo, n_near, invalid, with_data, with_header, per_cycle = evaluate(reader.lines, a.zyklen)
     median = statistics.median(values) if values else None
     median_z1, drift = cycle_stats(per_cycle)
     current = number(current_text) if current_text else None
@@ -437,7 +457,7 @@ def cmd_step(a):
         start.isoformat(timespec="seconds"), f"{a.soll:g}", a.tag, a.zyklen, with_data, with_header,
         len(values), n_no_echo, invalid, fmt(median), fmt(min(values) if values else None),
         fmt(max(values) if values else None), "", fmt(current), remark, log_path.name,
-        fmt(median_z1), fmt(drift)]))
+        fmt(median_z1), fmt(drift), n_near]))
     ref = update_summary(csv_path, row)
     dev = number(row["abw_ref_pct"]) if row["abw_ref_pct"] else None
 
@@ -448,6 +468,8 @@ def cmd_step(a):
         flags.append(f"nur {with_header}/{a.zyklen} Zyklen mit Kopfzeile")
     if n_no_echo:
         flags.append(f"{n_no_echo} × R5000")
+    if n_near:
+        flags.append(f"{n_near} × R0500 (Echo näher als 50 cm)")
     if invalid:
         flags.append(f"{invalid} ungültige Zeilen")
     if dev is not None and abs(dev) > LIMIT_MEDIAN_PCT:
@@ -458,7 +480,7 @@ def cmd_step(a):
             flags.append(f"Strom {dev_current:+.0f} % gegen +20 °C")
 
     print(f"\nSoll {a.soll:+g} °C: Zyklen mit Daten {with_data}/{a.zyklen}, mit Kopfzeile {with_header}/{a.zyklen}")
-    print(f"Werte {len(values)} (R5000: {n_no_echo}, ungültig: {invalid})")
+    print(f"Werte {len(values)} (R5000: {n_no_echo}, R0500: {n_near}, ungültig: {invalid})")
     if values:
         print(f"Median alle Werte {median:g} mm (min {min(values)}, max {max(values)})")
     if median_z1 is not None:
@@ -506,7 +528,10 @@ def main():
     no_push = argparse.ArgumentParser(add_help=False)
     no_push.add_argument("--kein-push", action="store_true", help="Laufordner nicht selbst einchecken und pushen")
 
-    sub.add_parser("neu", help="Laufordner anlegen", parents=[no_push])
+    nw = sub.add_parser("neu", help="Laufordner anlegen", parents=[no_push])
+    nw.add_argument("--personen", help="ohne Rückfrage")
+    nw.add_argument("--seriennummer", help="ohne Rückfrage")
+    nw.add_argument("--beschreibung", help="ohne Rückfrage")
 
     st = sub.add_parser("stufe", help="eine Temperaturstufe messen", parents=[no_push])
     st.add_argument("soll", type=float, help="Solltemperatur der Kammer in °C")
@@ -525,10 +550,14 @@ def main():
     ab.add_argument("--lauf", help="Laufordner (Name oder Pfad), Standard: der neueste")
 
     a = ap.parse_args()
+    stop_on_sigterm()
     try:
         {"neu": cmd_new, "stufe": cmd_step, "abschliessen": cmd_close}[a.command](a)
     except SupplyError as e:
         sys.exit(f"Netzteil: {e} (Ausgang wurde ausgeschaltet)")
+    except KeyboardInterrupt:
+        print("\nAbgebrochen" + (", Netzteil ausgeschaltet." if getattr(a, "netzteil", None) else "."), file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":
