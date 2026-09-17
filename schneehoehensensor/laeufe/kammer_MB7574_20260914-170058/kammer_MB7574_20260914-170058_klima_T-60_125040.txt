@@ -1,0 +1,5 @@
+# Klimakammer 172.168.225.202, Soll -60 °C, Toleranz 1 K, halten 30 min
+# zeit	ist_C	soll_C	status	fehler
+2026-09-17T12:50:40	-59.92	-60.00	3	
+2026-09-17T12:51:10	-59.95	-60.00	3	
+2026-09-17T12:51:40	-59.95	-60.00	3	

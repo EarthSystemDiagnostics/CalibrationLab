@@ -1,2 +1,7 @@
-start,soll_C,tag,zyklen,zyklen_mit_daten,zyklen_mit_kopfzeile,n_werte,n_5000,n_ungueltig,median_mm,min_mm,max_mm,abw_ref_pct,strom_mA,bemerkung,datei
-2026-09-14T17:01:47,-20,,3,3,3,33,0,0,984,976,988,,92,,kammer_MB7574_20260914-170058_T-20_170147.txt
+start,soll_C,tag,zyklen,zyklen_mit_daten,zyklen_mit_kopfzeile,n_werte,n_5000,n_ungueltig,median_mm,min_mm,max_mm,abw_ref_pct,strom_mA,bemerkung,datei,median_z1_mm,drift_mm
+2026-09-14T17:01:47,-20,,3,3,3,33,0,0,984,976,988,-0.10,92,,kammer_MB7574_20260914-170058_T-20_170147.txt,981,4.5
+2026-09-17T10:24:08,20,,3,2,2,15,0,0,981,979,984,0.00,82,,kammer_MB7574_20260914-170058_T+20_102408.txt,982,
+2026-09-17T10:26:47,20,,3,3,3,36,0,0,984,981,987,0.10,82.1,,kammer_MB7574_20260914-170058_T+20_102647.txt,983,2.5
+2026-09-17T11:25:27,-40,,3,3,3,36,0,0,981,972,987,-0.41,95.9,,kammer_MB7574_20260914-170058_T-40_112527.txt,978,6
+2026-09-17T12:13:01,-50,,3,3,3,36,0,0,970.5,947,981,-0.66,,98.3,kammer_MB7574_20260914-170058_T-50_121301.txt,975.5,-17
+2026-09-17T13:05:07,-60,,3,3,3,36,0,0,980,965,984,-0.66,97.6,,kammer_MB7574_20260914-170058_T-60_130507.txt,975.5,6.5

@@ -1,0 +1,3 @@
+# MB7574 Kammertest, Lauf kammer_MB7574_20260914-170058, Soll -60 °C, Tag '', Port /dev/cu.usbserial-FTEM95O3, 3 Zyklen je 20 s ein / 10 s aus
+# zeit	t_s	zyklus	phase	zeile
+2026-09-17T12:50:20.303	2.004	1	EIN	# Ansage Netzteil EIN
