@@ -1,2 +1,3 @@
 start,soll_C,tag,zyklen,zyklen_mit_daten,zyklen_mit_kopfzeile,n_werte,n_5000,n_ungueltig,median_mm,min_mm,max_mm,abw_ref_pct,strom_mA,bemerkung,datei,median_z1_mm,drift_mm,n_500
 2026-09-17T18:41:53,-50,abkling,8,8,8,96,0,0,975,955,982,,100,,kammer_MB7574_20260917-182810_T-50_abkling_184153.txt,973.5,-1.5,0
+2026-09-17T19:06:03,-50,,20,20,20,215,0,0,972,938,980,,100,,kammer_MB7574_20260917-182810_T-50_190603.txt,974.5,-4.5,25

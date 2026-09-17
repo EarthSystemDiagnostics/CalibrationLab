@@ -3,3 +3,9 @@
 2026-09-17T18:28:13  Kammer-Sollwert -50 °C gesetzt
 2026-09-17T18:31:44  -50 °C erreicht (ist -49.2), Messung um 18:41, wenn stabil
 2026-09-17T18:41:53  Messung -50 °C (abkling) beginnt: 8 × 20 s ein / 10,20,40,80,160,320,640 s aus, ca. 24 min
+2026-09-17T19:05:59    Strom laut Netzteil: 100 mA (Median aus 47 Ablesungen ab 10 s nach EIN, Auflösung 10 mA)
+2026-09-17T19:05:59    Median Zyklus 1 (Kaltstart) 973.5 mm, Anstieg bis Zyklus 8: -1.5 mm
+2026-09-17T19:05:59    keine Auffälligkeit
+2026-09-17T19:06:02  Stufe 2/10: -50 °C
+2026-09-17T19:06:02  -50 °C erreicht (ist -50.0), Messung um 19:06, wenn stabil
+2026-09-17T19:06:02  Messung -50 °C beginnt: 20 × 20 s ein / 160 s aus, ca. 57 min
