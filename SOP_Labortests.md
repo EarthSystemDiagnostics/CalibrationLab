@@ -7,7 +7,7 @@ Stand 14.09.2026. Gilt für alle Vorhaben in diesem Repo.
 - Ein Lauf ist ein Ordner `<vorhaben>/laeufe/<experiment>_<JJJJMMTT-HHMMSS>/`. Alle Dateien darin tragen diesen Namensstamm.
 - Drei Ebenen der Dokumentation: Der **Logger** schreibt mit, was wann passiert. Das **Laborbuch** hält fest, was gemacht und gesehen wurde. **`notizen.md`** im Laufordner fasst zusammen, was zum Verstehen der Daten nötig ist.
 - Rohdaten bleiben, wie sie aufgezeichnet wurden. Korrekturen und Nachträge gehen in `notizen.md`.
-- Ein Lauf ist abgeschlossen, wenn sein Ordner gepusht ist.
+- Ein Lauf ist abgeschlossen, wenn `notizen.md` ausgefüllt und sein Ordner gepusht ist. Logger dürfen den Laufordner schon während des Laufs selbst pushen.
 
 ## 2. Laborbuch
 

@@ -300,6 +300,54 @@ def test_new_step_summary_and_close():
     assert "noch nicht ausgefüllt" in r.stdout, r.stdout
 
 
+def test_run_folder_pushed_after_new_and_step():
+    # local bare repository as remote; a second clone pushes in between, so the logger
+    # has to pull --rebase once; uncommitted code changes stay out of the commits
+    tmp = Path(tempfile.mkdtemp(prefix="kammerlog_git_"))
+
+    def git(cwd, *args):
+        r = subprocess.run(["git", "-C", str(cwd), "-c", "user.name=Test", "-c", "user.email=t@t", *args],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (args, r.stderr)
+        return r.stdout
+
+    git(tmp, "init", "-q", "--bare", "remote.git")
+    git(tmp, "clone", "-q", "remote.git", "labor")
+    labor = tmp / "labor"
+    (labor / "code.py").write_text("x = 1\n")
+    git(labor, "add", "code.py")
+    git(labor, "commit", "-q", "-m", "code")
+    git(labor, "push", "-q", "origin", "HEAD")
+    git(tmp, "clone", "-q", "remote.git", "anderer")
+    for clone in ("labor", "anderer"):
+        git(tmp / clone, "config", "user.name", "Test")
+        git(tmp / clone, "config", "user.email", "t@t")
+    (labor / "code.py").write_text("x = 2\n")          # uncommitted code change on the lab laptop
+    laeufe = labor / "laeufe"
+
+    r = run(laeufe, "neu", stdin="x\nx\nx\n")
+    assert r.returncode == 0 and "eingecheckt und gepusht" in r.stdout, r.stdout + r.stderr
+
+    (tmp / "anderer" / "notiz.md").write_text("n\n")
+    git(tmp / "anderer", "add", "notiz.md")
+    git(tmp / "anderer", "commit", "-q", "-m", "anderswo")
+    git(tmp / "anderer", "pull", "-q", "--rebase")
+    git(tmp / "anderer", "push", "-q")
+
+    r = step(laeufe, 20, 812, "68\n\n")
+    assert r.returncode == 0 and "eingecheckt und gepusht" in r.stdout, r.stdout + r.stderr
+    log = git(tmp / "remote.git", "log", "--format=%s", "--name-only")
+    assert "Stufe +20 C" in log and "angelegt" in log and "anderswo" in log, log
+    assert "_zusammenfassung.csv" in log and "code.py" not in log.split("anderswo")[0], log
+    assert (labor / "code.py").read_text() == "x = 2\n"
+
+    r = step(laeufe, -40, 830, "90\n\n")      # with --kein-push nothing new reaches the remote
+    before = git(tmp / "remote.git", "rev-parse", "HEAD")
+    r = run(laeufe, "neu", "--kein-push", stdin="x\nx\nx\n")
+    assert r.returncode == 0 and "gepusht" not in r.stdout
+    assert git(tmp / "remote.git", "rev-parse", "HEAD") == before
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = failed = 0

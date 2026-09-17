@@ -2,7 +2,7 @@
 """Aim-TTi (Thurlby Thandar) EX355P bench supply over RS-232.
 
 Lab set-up (17.09.2026): Delock USB-RS232 adapter (FTDI FT2232H, channel 0),
-/dev/cu.usbserial-FT3GCNKB0, 1200 baud 8N1, the supply's own baud setting.
+/dev/cu.usbserial-FT3GCNKB0, 9600 baud 8N1 (set on the supply on 17.09.2026, before 1200).
 Commands end with LF, answers with CR LF; at least 10 ms between commands.
 Set: 'V 5.00', 'I 0.15', 'ON', 'OFF'. Read: 'V?', 'I?', 'OUT?', 'VO?' (0.1 V
 resolution), 'IO?' (10 mA), 'M?', 'ERR?', '*IDN?'. '*RST' is never sent (1 V, 1 A).
@@ -23,7 +23,7 @@ import time
 import serial
 
 DEFAULT_PORT = "/dev/cu.usbserial-FT3GCNKB0"
-DEFAULT_BAUD = 1200
+DEFAULT_BAUD = 9600
 SET_VOLTS, SET_AMPS = 5.00, 0.15
 V_MAX = 5.3                     # above this reading the output goes off immediately
 NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
@@ -155,6 +155,8 @@ def main():
             print(f"Gemessen: {v:.1f} V, {amps * 1000:.0f} mA")
     except SupplyError as e:
         raise SystemExit(f"Netzteil: {e}")
+    except KeyboardInterrupt:
+        raise SystemExit("\nAbgebrochen" + (", Ausgang wird ausgeschaltet" if a.test else ""))
     finally:
         if a.test:
             try:

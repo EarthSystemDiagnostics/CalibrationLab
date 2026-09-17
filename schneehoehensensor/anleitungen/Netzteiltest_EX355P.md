@@ -13,7 +13,7 @@ Stand 17.09.2026. Prüft die automatische Netzteilsteuerung (`skripte/ex355p.py`
 
 - Sensorkabel (4-mm-Stecker) aus dem Netzteil ziehen.
 - Multimeter (Gleichspannung) an den Ausgang. Falls vorhanden, Widerstand 68 Ω, ≥ 1 W parallel: zieht etwa 70 mA wie der Sensor und lässt die Spannung nach AUS schnell abfallen.
-- Netzteil am Delock-Adapter `/dev/cu.usbserial-FT3GCNKB0`, 1200 Baud.
+- Netzteil am Delock-Adapter `/dev/cu.usbserial-FT3GCNKB0`, 9600 Baud (am Netzteil eingestellt).
 - Terminal: `cd ~/CalibrationLab/schneehoehensensor`, dann `git pull`.
 
 ## Tests

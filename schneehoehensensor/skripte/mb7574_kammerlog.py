@@ -16,6 +16,10 @@ stufe <T>     one temperature step in the newest run folder: announces the power
 abschliessen  writes a notizen.md template; once it is filled in, commits and
               pushes the run folder after confirmation.
 
+neu and stufe commit and push the run folder on their own (only the run folder, never
+code), so the data can be analysed elsewhere minutes later; --kein-push skips that.
+A failed push stops nothing: the next step or abschliessen pushes again.
+
 Summary per step: median of all values; median of cycle 1, the cold start after the
 soak and the basis of the comparison with the +20 C reference; drift = median of the
 last cycle minus cycle 1, i.e. self-heating (the off-time does not cool the sensor back).
@@ -86,12 +90,56 @@ def git_state(path):
         return "unknown", "unknown"
 
 
+def push_run(run, message):
+    """Commit the run folder, and nothing else, and push. True on success, never exits.
+    A rejected push (someone pushed in between) is retried once after pull --rebase."""
+    env = os.environ | {"GIT_TERMINAL_PROMPT": "0"}
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=15")
+
+    def git(*args):
+        try:
+            return subprocess.run(["git", "-C", str(run), *args], capture_output=True,
+                                  text=True, timeout=90, env=env)
+        except (OSError, subprocess.SubprocessError) as e:
+            return subprocess.CompletedProcess(args, 1, "", str(e))
+
+    def failed(step, r):
+        detail = (r.stderr or r.stdout).strip().splitlines()
+        print(f"Nicht gepusht ({step}: {detail[-1] if detail else 'Fehler'}). "
+              "Die Daten liegen lokal; die nächste Stufe oder ./kammer abschliessen pusht erneut.")
+        return False
+
+    if git("rev-parse", "--is-inside-work-tree").returncode:
+        print("Nicht gepusht: der Laufordner liegt in keinem git-Repo.")
+        return False
+    r = git("add", "--", ".")
+    if r.returncode:
+        return failed("git add", r)
+    if git("diff", "--cached", "--quiet", "--", ".").returncode:
+        r = git("commit", "-m", message, "--", ".")
+        if r.returncode:
+            return failed("git commit", r)
+    r = git("push")
+    if r.returncode:
+        pull = git("pull", "--rebase", "--autostash")
+        if pull.returncode:
+            git("rebase", "--abort")
+            return failed("git pull --rebase", pull)
+        r = git("push")
+        if r.returncode:
+            return failed("git push", r)
+    print("Laufordner eingecheckt und gepusht.")
+    return True
+
+
 def find_port():
-    """Sensor port: the FTDI TTL-232R cable if present, otherwise the only /dev/cu.usbserial*."""
+    """Sensor port: the FTDI TTL-232R cable if present, otherwise the only /dev/cu.usbserial*
+    that is not one of the two channels of the supply's Delock adapter."""
     from serial.tools import list_ports
     ttl = sorted(p.device for p in list_ports.comports()
                  if p.device.startswith("/dev/cu.") and "TTL232R" in f"{p.product} {p.description}")
-    ports = ttl if len(ttl) == 1 else sorted(glob.glob("/dev/cu.usbserial*"))
+    ports = ttl if len(ttl) == 1 else sorted(p for p in glob.glob("/dev/cu.usbserial*")
+                                             if not p.startswith(PSU_PORT[:-1]))
     if len(ports) != 1:
         sys.exit(f"Sensor-Port nicht eindeutig ({ports or 'keiner gefunden'}), mit --port angeben")
     return ports[0]
@@ -290,6 +338,8 @@ def cmd_new(a):
     print(f"\nLaufordner angelegt: {run}\nIns Laborbuch: {run.name}")
     if dirty != "no":
         print("WARNUNG: Der Code hat nicht eingecheckte Änderungen; der Lauf ist keinem Code-Stand eindeutig zuzuordnen.")
+    if not a.kein_push:
+        push_run(run, f"schneehoehensensor: Lauf {run.name} angelegt")
 
 
 def cmd_step(a):
@@ -416,6 +466,8 @@ def cmd_step(a):
               + (f", Anstieg bis Zyklus {len(per_cycle)}: {drift:+g} mm" if drift is not None else "")
               + (f", gegen +20 °C {dev:+.1f} %" if dev is not None else ""))
     print("AUFFÄLLIG: " + "; ".join(flags) if flags else "keine Auffälligkeit")
+    if not a.kein_push:
+        push_run(run, f"schneehoehensensor: Lauf {run.name} Stufe {a.soll:+g} C" + (f" {a.tag}" if a.tag else ""))
 
 
 def cmd_close(a):
@@ -442,13 +494,8 @@ def cmd_close(a):
     if input("\nEinchecken und pushen? [j/N] ").strip().lower() != "j":
         print("Nicht eingecheckt.")
         return
-    for args in (["add", "--", "."],
-                 ["commit", "-m", f"schneehoehensensor: Lauf {run.name}", "--", "."],
-                 ["push"]):
-        if subprocess.run(["git", "-C", str(run), *args]).returncode:
-            hint = " (erst 'git pull --rebase', dann erneut abschliessen)" if args[0] == "push" else ""
-            sys.exit(f"git {args[0]} fehlgeschlagen{hint}")
-    print("Eingecheckt und gepusht.")
+    if not push_run(run, f"schneehoehensensor: Lauf {run.name} abgeschlossen"):
+        sys.exit(1)
 
 
 def main():
@@ -456,9 +503,12 @@ def main():
     ap.add_argument("--laeufe", type=Path, default=RUNS_DIR, help=argparse.SUPPRESS)   # tests only
     sub = ap.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("neu", help="Laufordner anlegen")
+    no_push = argparse.ArgumentParser(add_help=False)
+    no_push.add_argument("--kein-push", action="store_true", help="Laufordner nicht selbst einchecken und pushen")
 
-    st = sub.add_parser("stufe", help="eine Temperaturstufe messen")
+    sub.add_parser("neu", help="Laufordner anlegen", parents=[no_push])
+
+    st = sub.add_parser("stufe", help="eine Temperaturstufe messen", parents=[no_push])
     st.add_argument("soll", type=float, help="Solltemperatur der Kammer in °C")
     st.add_argument("--tag", default="", help="Zusatz im Dateinamen, z. B. tisch, 60min, wdh, ende")
     st.add_argument("--zyklen", type=int, default=3)
