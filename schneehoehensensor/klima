@@ -1,4 +1,8 @@
 #!/bin/sh
 # Kurzaufruf der Klimakammer-Steuerung, im Ordner schneehoehensensor:
 #   ./klima status     ./klima stufe -40     ./klima soll 20
-exec python3 "$(dirname "$0")/skripte/klimakammer.py" "$@"
+# Apple-Python (/usr/bin/python3) bevorzugt, wenn pyserial dafür installiert ist: macOS sperrt
+# python.org-Python den Zugriff aufs lokale Netz (Kammer), sobald die startende SSH-Sitzung endet.
+PY=python3
+/usr/bin/python3 -c "import serial" 2>/dev/null && PY=/usr/bin/python3
+exec "$PY" "$(dirname "$0")/skripte/klimakammer.py" "$@"

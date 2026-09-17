@@ -1,4 +1,8 @@
 #!/bin/sh
 # Kurzaufruf des Messprogramms (Kammer fahren, stabil warten, Stufe messen), im Ordner schneehoehensensor:
 #   ./programm 20 -40 -50 -60 -70 20 --stabil 30
-exec python3 "$(dirname "$0")/skripte/messprogramm.py" "$@"
+# Apple-Python (/usr/bin/python3) bevorzugt, wenn pyserial dafür installiert ist: macOS sperrt
+# python.org-Python den Zugriff aufs lokale Netz (Kammer), sobald die startende SSH-Sitzung endet.
+PY=python3
+/usr/bin/python3 -c "import serial" 2>/dev/null && PY=/usr/bin/python3
+exec "$PY" "$(dirname "$0")/skripte/messprogramm.py" "$@"

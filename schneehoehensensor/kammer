@@ -1,4 +1,8 @@
 #!/bin/sh
 # Kurzaufruf des Kammertest-Loggers, im Ordner schneehoehensensor:
 #   ./kammer neu     ./kammer stufe -40     ./kammer abschliessen
-exec python3 "$(dirname "$0")/skripte/mb7574_kammerlog.py" "$@"
+# Apple-Python (/usr/bin/python3) bevorzugt, wenn pyserial dafür installiert ist: macOS sperrt
+# python.org-Python den Zugriff aufs lokale Netz (Kammer), sobald die startende SSH-Sitzung endet.
+PY=python3
+/usr/bin/python3 -c "import serial" 2>/dev/null && PY=/usr/bin/python3
+exec "$PY" "$(dirname "$0")/skripte/mb7574_kammerlog.py" "$@"
