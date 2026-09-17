@@ -59,9 +59,31 @@ Diese Stufe ist der Bezug für alle folgenden. War dabei CoolTerm verbunden oder
 
 Diese Stufe gilt dann als Bezug; die erste bleibt als Rohdatei erhalten. Ins Laborbuch, warum wiederholt wurde.
 
+## Klimakammer per Skript
+
+Zweites Terminal-Fenster öffnen (Cmd-N):
+
+```
+cd ~/CalibrationLab/schneehoehensensor
+git pull
+./klima status
+```
+
+Für Hinweise aufs Handy einmalig: App „ntfy“ installieren, Thema aus dem Laborbuch abonnieren (Android: Akku-Optimierung für ntfy aus), am Labor-Mac `echo <thema> > ~/.klima_ntfy`, testen mit `curl -d "Test" ntfy.sh/<thema>`.
+
+`./klima status` muss Ist, Soll und „läuft“ zeigen. Das Setzen des Sollwerts ist an der echten Kammer noch nicht erprobt: beim ersten `./klima stufe` am Panel nachsehen, ob der neue Sollwert ankommt.
+
+Je Stufe in diesem Fenster, z. B.:
+
+```
+./klima stufe -50
+```
+
+Mit `j` bestätigen. Das Skript meldet die voraussichtliche Uhrzeit und gibt eine Mac-Mitteilung beim Erreichen, 10 min vor Ende und nach 30 min („Stufe messen“). Dann im ersten Fenster die Stufe messen. Ctrl-C beendet das Warten, der Sollwert bleibt.
+
 ## 4. Kältestufen
 
-Je Stufe: Solltemperatur einstellen, nach Erreichen 30 min halten, dann die passende Zeile. Ablauf wie in Abschnitt 3. Schneller: Pfeil nach oben, Zahl ändern, Enter.
+Je Stufe: `./klima stufe <Zahl>` im zweiten Fenster, bei „Stufe messen“ im ersten Fenster die passende Zeile. Ablauf wie in Abschnitt 3. Schneller: Pfeil nach oben, Zahl ändern, Enter.
 
 ```
 ./kammer stufe -40

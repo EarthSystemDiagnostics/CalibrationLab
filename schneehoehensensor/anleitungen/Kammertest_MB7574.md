@@ -34,6 +34,21 @@ pwd
 
 `pwd` muss auf `schneehoehensensor` enden. CoolTerm muss getrennt sein: Zwei Programme am selben Port teilen sich die Daten, Zeilen gehen verloren. Der Logger bricht dann mit „Port … ist schon geöffnet“ ab.
 
+## Klimakammer
+
+Die Weiss ClimeEvent lässt sich vom Labor-Mac über das LAN-Kabel abfragen und setzen (Kammer 172.168.225.202, Mac 172.168.225.10). Dafür ein zweites Terminal-Fenster öffnen (Cmd-N) und dort ebenfalls `cd ~/CalibrationLab/schneehoehensensor`.
+
+```
+./klima status
+./klima stufe -40
+```
+
+- **`./klima status`** liest Ist, Soll und Status und ändert nichts.
+- **`./klima stufe <Zahl>`** zeigt Ist und Soll, fragt „Sollwert auf … setzen? [j/N]“, setzt und prüft ihn und wartet dann. Es zeigt laufend die Abkühlrate und die voraussichtliche Uhrzeit der Messung. Mac-Mitteilung mit Ton: beim Erreichen (±1 K), 10 min vor Ende und nach 30 min Haltezeit („Stufe messen“). Die Kammerwerte landen im Laufordner (`…_klima_T-40_….txt`).
+- Nach „Stufe messen“ im ersten Fenster `./kammer stufe <Zahl>`.
+- **Hinweise aufs Handy (ntfy):** App „ntfy“ installieren (Google Play bzw. App Store), mit „+“ das Thema abonnieren, bei Android die Akku-Optimierung für ntfy ausschalten. Das Thema steht im Laborbuch. Am Labor-Mac einmalig `echo <thema> > ~/.klima_ntfy`, testen mit `curl -d "Test" ntfy.sh/<thema>`. Danach schickt `./klima stufe` jede Meldung auch aufs Handy. Der Mac braucht dafür zusätzlich WLAN.
+- Ctrl-C beendet das Warten, der Sollwert bleibt. `./klima warten <Zahl>` wartet ohne zu setzen. Läuft die Kammer nicht, meldet das Skript es; `--start` startet den Handbetrieb.
+
 ## Befehle
 
 ```
@@ -57,7 +72,7 @@ Zwischen den Messungen bleibt der Sensor stromlos: im Dauerbetrieb heizt er sich
 
 1. `git pull`, dann `./kammer neu`. Den Namen des Laufordners ins Laborbuch.
 2. Tischtest vor dem Einbau: `./kammer stufe 20 --tag tisch`.
-3. Stufen: +20 °C → −40 → −50 → −60 → −70 → +20 °C. Je Stufe Solltemperatur erreicht, 30 min halten, dann `./kammer stufe <Solltemperatur>`.
+3. Stufen: +20 °C → −40 → −50 → −60 → −70 → +20 °C. Je Stufe im zweiten Fenster `./klima stufe <Solltemperatur>`; bei „Stufe messen“ im ersten Fenster `./kammer stufe <Solltemperatur>`.
 4. Läuft bei −70 °C alles, nach weiteren 60 min `./kammer stufe -70 --tag 60min`. Die letzte Stufe `./kammer stufe 20 --tag ende`.
 
 ## Ausfall und Auffälligkeiten

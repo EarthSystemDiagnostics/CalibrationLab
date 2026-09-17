@@ -1,0 +1,4 @@
+#!/bin/sh
+# Kurzaufruf der Klimakammer-Steuerung, im Ordner schneehoehensensor:
+#   ./klima status     ./klima stufe -40     ./klima soll 20
+exec python3 "$(dirname "$0")/skripte/klimakammer.py" "$@"
