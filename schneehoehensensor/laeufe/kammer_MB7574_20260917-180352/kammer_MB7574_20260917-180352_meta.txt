@@ -1,0 +1,9 @@
+Experiment       : kammer_MB7574
+Run stamp        : 20260917-180352
+Start (PC time)  : 2026-09-17T18:03:52
+Persons          : Thom (remote)
+Sensor           : MaxBotix MB7574
+Serial number    : MB7574-01
+Description      : Kurzer Probelauf Messprogramm, -50/-45, stabil 1 min
+Code commit      : db448b2d6febcb11d19410fdd749669aacfe879b
+Uncommitted code : no
