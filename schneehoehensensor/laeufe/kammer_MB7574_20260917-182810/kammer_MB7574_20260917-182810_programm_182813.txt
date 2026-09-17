@@ -1,0 +1,5 @@
+2026-09-17T18:28:13  Programm -50:abkling  -50  +20:warm1  -60  -65  -70:dauer  +20:warm2  -70:zyk  -40  +20:ende °C, toleranz ±1 K, Plan programme/nacht_2026-09-17.txt, PID 6346
+2026-09-17T18:28:13  Stufe 1/10: -50 °C (abkling)
+2026-09-17T18:28:13  Kammer-Sollwert -50 °C gesetzt
+2026-09-17T18:31:44  -50 °C erreicht (ist -49.2), Messung um 18:41, wenn stabil
+2026-09-17T18:41:53  Messung -50 °C (abkling) beginnt: 8 × 20 s ein / 10,20,40,80,160,320,640 s aus, ca. 24 min
