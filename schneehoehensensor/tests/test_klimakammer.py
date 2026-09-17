@@ -132,6 +132,26 @@ def test_ntfy_topic_default_from_env():
         os.environ.pop("KLIMA_NTFY") if old is None else os.environ.__setitem__("KLIMA_NTFY", old)
 
 
+def test_ntfy_sent_with_curl():
+    # fake curl and osascript on PATH record their arguments instead of sending anything
+    import importlib.util, os, types
+    bin_dir = Path(tempfile.mkdtemp(prefix="klima_bin_"))
+    for name in ("curl", "osascript"):
+        (bin_dir / name).write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{bin_dir}/{name}.log"\n')
+        (bin_dir / name).chmod(0o755)
+    spec = importlib.util.spec_from_file_location("klima", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    old = os.environ["PATH"]
+    try:
+        os.environ["PATH"] = f"{bin_dir}:{old}"
+        mod.notify("Stufe messen", "-70 °C seit 30 min", types.SimpleNamespace(still=False, ntfy="test-thema"))
+    finally:
+        os.environ["PATH"] = old
+    sent = (bin_dir / "curl.log").read_text().splitlines()
+    assert "Title: Stufe messen" in sent and "-70 °C seit 30 min" in sent and "https://ntfy.sh/test-thema" in sent, sent
+
+
 def test_no_connection_is_reported():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

@@ -18,7 +18,8 @@ this script (17.09.2026): check with 'status' before relying on them.
 
 While waiting, chamber readings go to the newest run folder of schneehoehensensor
 as <stem>_klima_T<T>_<HHMMSS>.txt. Push notifications via ntfy.sh go to the topic in
-~/.klima_ntfy (one line, not in the repo) or $KLIMA_NTFY; --ntfy overrides it.
+~/.klima_ntfy (one line, not in the repo) or $KLIMA_NTFY; --ntfy overrides it. They are sent
+with curl, which uses the system certificates (python.org builds of Python lack them).
 """
 import argparse
 import os
@@ -26,7 +27,6 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -128,11 +128,13 @@ def notify(title, text, a):
                     f'with title "{title}" sound name "Glass"'], capture_output=True)
     if a.ntfy:
         try:
-            req = urllib.request.Request(f"https://ntfy.sh/{a.ntfy}", data=text.encode("utf-8"),
-                                         headers={"Title": title})
-            urllib.request.urlopen(req, timeout=10)
+            r = subprocess.run(["curl", "-sS", "-m", "10", "-H", f"Title: {title}", "--data-binary", text,
+                                f"https://ntfy.sh/{a.ntfy}"], capture_output=True, text=True)
+            error = r.stderr.strip() if r.returncode else ""
         except OSError as e:
-            print(f"ntfy nicht erreichbar: {e}")
+            error = str(e)
+        if error:
+            print(f"ntfy nicht erreichbar: {error}")
 
 
 def rate_per_min(readings):
