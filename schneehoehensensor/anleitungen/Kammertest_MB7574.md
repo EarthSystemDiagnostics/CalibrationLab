@@ -32,7 +32,7 @@ cd ~/CalibrationLab/schneehoehensensor
 pwd
 ```
 
-`pwd` muss auf `schneehoehensensor` enden. CoolTerm muss geschlossen sein, sonst ist der Port belegt.
+`pwd` muss auf `schneehoehensensor` enden. CoolTerm muss getrennt sein: Zwei Programme am selben Port teilen sich die Daten, Zeilen gehen verloren. Der Logger bricht dann mit „Port … ist schon geöffnet“ ab.
 
 ## Befehle
 
@@ -47,7 +47,7 @@ pwd
 - **`./kammer neu`** einmal je Kammertest, und wieder, wenn Sensor oder Ziel neu montiert wurden. Fragt Personen, Seriennummer (fehlt sie: eigene Kennung, z. B. `MB7574-01`) und Beschreibung ab.
 - **`./kammer stufe <Zahl>`** je Temperaturstufe, die Zahl ist die Solltemperatur in °C. Negative Zahlen direkt schreiben. Die Stufe landet im neuesten Laufordner; einen anderen mit `--lauf <Ordnername>`.
 - Ablauf einer Stufe: Das Skript piept und sagt „Netzteil EIN“ bzw. „Netzteil AUS“ an: dreimal 20 s ein, dazwischen je 10 s aus. Beim ersten EIN den Strom am Netzteil ablesen. Danach fragt es „Strom während EIN in mA“ (Zahl, Enter) und „Bemerkung“ (Text oder nur Enter) und zeigt die Zusammenfassung: Median aller Werte, Median von Zyklus 1 (Kaltstart nach der Haltezeit) und den Anstieg bis zum letzten Zyklus (Eigenerwärmung; die 10-s-Pausen kühlen den Sensor nicht zurück).
-- **`--tag <Wort>`** hängt einen Zusatz an den Dateinamen: `tisch`, `60min`, `wdh`, `ende`. Bezug für den Median von Zyklus 1 und den Strom ist die erste Stufe `./kammer stufe 20` **ohne** Tag; kommt sie erst später, rechnet das Skript die Abweichungen der früheren Stufen nach.
+- **`--tag <Wort>`** hängt einen Zusatz an den Dateinamen: `tisch`, `60min`, `wdh`, `ende`, `bezug`. Bezug für den Median von Zyklus 1 und den Strom ist die Stufe mit `--tag bezug`, sonst die erste Stufe `./kammer stufe 20` ohne Tag. Muss die Bezugsstufe wiederholt werden: 15 min warten, `./kammer stufe 20 --tag bezug`. Das Skript rechnet die Abweichungen aller Stufen jedes Mal neu.
 - **`./kammer abschliessen`** zweimal: Der erste Aufruf legt `notizen.md` an. Nach dem Ausfüllen checkt der zweite Aufruf den Laufordner nach Rückfrage (`j`) ein und pusht.
 - Eine laufende Stufe bricht Ctrl-C ab; danach mit `--tag wdh` wiederholen. Hilfe: `./kammer stufe --help`.
 

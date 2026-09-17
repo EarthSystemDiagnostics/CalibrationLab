@@ -40,6 +40,8 @@ def step(laeufe, soll, value, stdin):
     """One step with a simulated sensor: 3 cycles of 2 s on / 1 s off.
     Cycle 3 carries one garbled line and one R5000 among five readings."""
     master, slave = pty.openpty()
+    name = os.ttyname(slave)
+    os.close(slave)          # the logger refuses a port another process holds open
     t0 = time.time()
 
     def sensor():
@@ -56,13 +58,22 @@ def step(laeufe, soll, value, stdin):
                     os.write(master, f"R{value:04d}\r".encode())
 
     threading.Thread(target=sensor, daemon=True).start()
-    return run(laeufe, "stufe", str(soll), "--port", os.ttyname(slave), "--ein", "2", "--aus", "1",
+    return run(laeufe, "stufe", str(soll), "--port", name, "--ein", "2", "--aus", "1",
                stdin=stdin)
 
 
 def test_step_without_run_folder_stops():
     r = run(Path(tempfile.mkdtemp(prefix="kammerlog_")), "stufe", "20", "--port", "/dev/null")
     assert r.returncode != 0 and "Erst: ./kammer neu" in r.stderr, r.stderr
+
+
+def test_busy_port_is_refused():
+    laeufe = Path(tempfile.mkdtemp(prefix="kammerlog_"))
+    run(laeufe, "neu", stdin="x\nx\nx\n")
+    master, slave = pty.openpty()                 # this test process keeps the port open
+    r = run(laeufe, "stufe", "20", "--port", os.ttyname(slave))
+    os.close(slave); os.close(master)
+    assert r.returncode != 0 and "schon geöffnet" in r.stderr, r.stdout + r.stderr
 
 
 def test_short_command_runs():
@@ -101,6 +112,13 @@ def test_old_summary_is_upgraded_from_the_log():
         rows = list(reader)
     assert reader.fieldnames == kl.SUMMARY_COLUMNS
     assert [r["abw_ref_pct"] for r in rows] == ["-0.91", "0.00"], rows
+
+    # a repeated reference step tagged "bezug" takes over from the first untagged +20 C step
+    kl.update_summary(summary, {k: "" for k in kl.SUMMARY_COLUMNS}
+                      | {"soll_C": "20", "tag": "bezug", "median_z1_mm": "1000", "datei": "y.txt"})
+    with open(summary, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["abw_ref_pct"] for r in rows] == ["-1.90", "-1.00", "0.00"], rows
 
 
 def test_new_step_summary_and_close():

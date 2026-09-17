@@ -19,6 +19,7 @@ abschliessen  writes a notizen.md template; once it is filled in, commits and
 Summary per step: median of all values; median of cycle 1, the cold start after the
 soak and the basis of the comparison with the +20 C reference; drift = median of the
 last cycle minus cycle 1, i.e. self-heating (the off-time does not cool the sensor back).
+Reference: the step tagged 'bezug' if there is one, otherwise the first +20 C step without tag.
 
 Procedure: schneehoehensensor/anleitungen/Kammertest_MB7574.md
 """
@@ -26,6 +27,7 @@ import argparse
 import csv
 import datetime as dt
 import glob
+import os
 import re
 import statistics
 import subprocess
@@ -84,6 +86,21 @@ def find_port():
     if len(ports) != 1:
         sys.exit(f"FTDI-Port nicht eindeutig ({ports or 'keiner gefunden'}), mit --port angeben")
     return ports[0]
+
+
+def port_users(port):
+    """Other processes holding the serial port open, as 'name (PID n)'. Two programs on one
+    port split the byte stream between them, so lines go missing. Empty if lsof is unavailable."""
+    try:
+        out = subprocess.run(["lsof", "-t", port], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    users = []
+    for pid in (int(x) for x in out.split() if x.isdigit()):
+        if pid != os.getpid():
+            name = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True).stdout.strip()
+            users.append(f"{Path(name).name or '?'} (PID {pid})")
+    return users
 
 
 def pick_run(a):
@@ -218,10 +235,12 @@ def read_summary(csv_path):
 
 
 def update_summary(csv_path, new_row):
-    """Append a step, recompute every deviation against the reference (first +20 C step
-    without tag, median of cycle 1) and rewrite the summary. Returns the reference row."""
+    """Append a step, recompute every deviation against the reference (step tagged 'bezug',
+    else the first +20 C step without tag; median of cycle 1) and rewrite the summary.
+    Returns the reference row."""
     rows = read_summary(csv_path) + [new_row]
-    ref = next((r for r in rows if number(r["soll_C"]) == 20 and not r["tag"] and r["median_z1_mm"]), None)
+    ref = (next((r for r in rows if r["tag"] == "bezug" and r["median_z1_mm"]), None)
+           or next((r for r in rows if number(r["soll_C"]) == 20 and not r["tag"] and r["median_z1_mm"]), None))
     for r in rows:
         r["abw_ref_pct"] = (fmt(100 * (float(r["median_z1_mm"]) / float(ref["median_z1_mm"]) - 1), ".2f")
                             if ref and r["median_z1_mm"] else "")
@@ -261,6 +280,10 @@ def cmd_new(a):
 def cmd_step(a):
     run = pick_run(a)
     port = a.port or find_port()
+    users = port_users(port)
+    if users:
+        sys.exit(f"Port {port} ist schon geöffnet von {', '.join(users)}. "
+                 "Dort trennen (CoolTerm: Disconnect), dann erneut starten.")
     start = dt.datetime.now()
     log_path = run / ("_".join(filter(None, [run.name, f"T{a.soll:+g}", a.tag, start.strftime("%H%M%S")])) + ".txt")
     csv_path = run / f"{run.name}_zusammenfassung.csv"

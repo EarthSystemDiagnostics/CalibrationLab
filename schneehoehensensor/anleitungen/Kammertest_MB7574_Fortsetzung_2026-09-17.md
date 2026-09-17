@@ -51,7 +51,13 @@ Ab jetzt bleibt das Terminal in diesem Ordner.
 4. „Bemerkung“: Text oder nur Enter.
 5. Zusammenfassung lesen; steht dort „AUFFÄLLIG“, ins Laborbuch.
 
-Diese Stufe hat keinen `--tag` und ist damit der Bezug für alle folgenden.
+Diese Stufe ist der Bezug für alle folgenden. War dabei CoolTerm verbunden oder fehlt etwas (weniger als 3/3 Zyklen, ungültige Zeilen): CoolTerm trennen, 15 min warten, dann
+
+```
+./kammer stufe 20 --tag bezug
+```
+
+Diese Stufe gilt dann als Bezug; die erste bleibt als Rohdatei erhalten. Ins Laborbuch, warum wiederholt wurde.
 
 ## 4. Kältestufen
 
