@@ -29,7 +29,7 @@ class SimServ(socketserver.BaseRequestHandler):
         fields = buf.decode("latin-1").strip().split(SEP)
         cmd, args, s = fields[0], fields[2:], self.server.state
         with s["lock"]:
-            answer = None
+            answer, code = None, "1"
             if cmd == "11004":
                 if args[0] == "1":
                     s["ist"] += max(-5.0, min(5.0, s["soll"] - s["ist"]))
@@ -45,8 +45,8 @@ class SimServ(socketserver.BaseRequestHandler):
             elif cmd == "14001":
                 s["status"] |= 2
             elif cmd == "99997":
-                answer = "ClimeEvent Simulator"
-        self.request.sendall(("1" + (SEP + answer if answer is not None else "") + "\r\n").encode("latin-1"))
+                code = "-8"                  # the lab chamber answers info with a read failure
+        self.request.sendall((code + (SEP + answer if answer is not None else "") + "\r\n").encode("latin-1"))
 
 
 def start_sim(status=3, soll=20.0, ist=20.0):
@@ -70,6 +70,7 @@ def test_status_reads_chamber():
     srv.shutdown()
     assert r.returncode == 0, r.stderr
     assert "ist +20.0 °C, soll +20.0 °C" in r.stdout and "Status 3: läuft" in r.stdout, r.stdout
+    assert "Kammer 127.0.0.1\n" in r.stdout, r.stdout      # info answered -8, status goes on
 
 
 def test_setpoint_written_after_confirmation():

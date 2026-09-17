@@ -10,7 +10,9 @@ The chamber must be reachable from this Mac (LAN adapter 172.168.225.10/24, cham
 172.168.225.202, no gateway). SimServ: fields separated by byte 0xB6 (latin-1),
 'command, chamber 1, parameters' + CR; answer '1', fields + CRLF; one TCP connection
 per command. Read: 11004 actual, 11002 setpoint (control variable 1 = temperature,
-2 = humidity), 10012 status (1 present, +2 running, +8 alarm), 99997 info.
+2 = humidity), 10012 status (1 not running, 3 running, +4 warning, +8 alarm), 99997 info.
+Error answers are negative codes: -5 unknown command, -6 bad parameters, -8 read failure.
+Parameter layout as in github.com/IzaakWN/ClimateChamberMonitor (chamber_commands.py).
 Write: 11001 setpoint, 14001 manual mode on. The write commands were first used by
 this script (17.09.2026): check with 'status' before relying on them.
 
@@ -34,7 +36,8 @@ HOST = os.environ.get("KLIMA_HOST", "172.168.225.202")
 PORT = int(os.environ.get("KLIMA_PORT", "2049"))
 SEP = "\xb6"
 T_MIN, T_MAX = -72.0, 40.0          # chamber limit -72 C; upper bound kept low for these tests
-STATUS_RUNNING, STATUS_ALARM = 2, 8
+STATUS_RUNNING, STATUS_WARNING, STATUS_ALARM = 2, 4, 8
+ERRORS = {-5: "unbekannter Befehl", -6: "falsche Parameter", -8: "Lesefehler"}
 NTFY_FILE = Path.home() / ".klima_ntfy"
 
 
@@ -61,7 +64,11 @@ class Chamber:
             raise SimServError(f"keine Verbindung zur Kammer {self.host}:{self.port} ({e})") from e
         fields = buf.decode("latin-1").strip().split(SEP)
         if not fields or fields[0] != "1":
-            raise SimServError(f"Befehl {cmd}: unerwartete Antwort {buf!r}")
+            try:
+                code = int(fields[0])
+            except (ValueError, IndexError):
+                raise SimServError(f"Befehl {cmd}: unerwartete Antwort {buf!r}") from None
+            raise SimServError(f"Befehl {cmd}: Fehler {code} ({ERRORS.get(code, 'unbekannt')})")
         return fields[1:]
 
     def value(self, cmd, *params):
@@ -77,7 +84,13 @@ class Chamber:
         return int(self.value(10012))
 
     def info(self):
-        return " ".join(self.query(99997))
+        """Chamber info text, or None: some controllers answer 99997 with -8."""
+        for params in ((), (1,)):
+            try:
+                return " ".join(self.query(99997, *params))
+            except SimServError:
+                pass
+        return None
 
     def set_setpoint(self, t):
         self.query(11001, 1, f"{t:.1f}")
@@ -102,7 +115,8 @@ def hm(ts):
 
 
 def running_text(st):
-    return ("läuft" if st & STATUS_RUNNING else "läuft nicht") + (", ALARM" if st & STATUS_ALARM else "")
+    return (("läuft" if st & STATUS_RUNNING else "läuft nicht")
+            + (", Warnung" if st & STATUS_WARNING else "") + (", ALARM" if st & STATUS_ALARM else ""))
 
 
 def notify(title, text, a):
@@ -134,7 +148,8 @@ def rate_per_min(readings):
 
 def show_status(a, k):
     st = k.status()
-    print(f"Kammer {a.host}: {k.info()}")
+    info = k.info()
+    print(f"Kammer {a.host}" + (f": {info}" if info else ""))
     print(f"Temperatur ist {k.actual():+.1f} °C, soll {k.setpoint():+.1f} °C")
     try:
         print(f"Feuchte ist {k.value(11004, 2):.1f} %rF, soll {k.value(11002, 2):.1f} %rF")
