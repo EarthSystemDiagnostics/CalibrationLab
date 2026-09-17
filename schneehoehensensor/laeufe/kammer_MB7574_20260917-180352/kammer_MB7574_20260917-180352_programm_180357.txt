@@ -1,0 +1,4 @@
+2026-09-17T18:03:57  Programm -50  -45 °C, stabil 1 min ±1 K, 3 × 20/10 s, PID 6122
+2026-09-17T18:03:57  Stufe 1/2: -50 °C
+2026-09-17T18:03:58  -50 °C erreicht (ist -50.0), Messung um 18:04, wenn stabil
+2026-09-17T18:04:58  Messung -50 °C beginnt
