@@ -2,3 +2,10 @@
 2026-09-18T13:49:04  Stufe 1/9: +20 °C (bezug)
 2026-09-18T13:49:04  +20 °C erreicht (ist +20.0), Messung um 15:49, wenn stabil
 2026-09-18T15:49:08  Messung +20 °C (bezug) beginnt: 20 × 20 s ein / 160 s aus, ca. 57 min
+2026-09-18T16:46:40    Strom laut Netzteil: 90 mA (Median aus 118 Ablesungen ab 10 s nach EIN, Auflösung 10 mA)
+2026-09-18T16:46:40    Median Zyklus 1 (Kaltstart) 973 mm, Anstieg bis Zyklus 20: +2 mm, gegen +20 °C +0.0 %
+2026-09-18T16:46:40    keine Auffälligkeit
+2026-09-18T16:46:41  Stufe 2/9: -50 °C
+2026-09-18T16:46:41  Kammer-Sollwert -50 °C gesetzt
+2026-09-18T17:16:20  -50 °C erreicht (ist -49.2), Messung um 17:46, wenn stabil
+2026-09-18T17:46:28  Messung -50 °C beginnt: 40 × 20 s ein / 160 s aus, ca. 117 min
