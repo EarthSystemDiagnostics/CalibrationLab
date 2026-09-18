@@ -1,0 +1,4 @@
+2026-09-18T13:49:04  Programm +20:bezug  -50  -70:kurz6s  -70:dauer  -70:pause20min  -70:lang60s  +20:warm  -70:zyk  +20:ende °C, toleranz ±1 K, Plan programme/lang_2026-09-18.txt, PID 10926
+2026-09-18T13:49:04  Stufe 1/9: +20 °C (bezug)
+2026-09-18T13:49:04  +20 °C erreicht (ist +20.0), Messung um 15:49, wenn stabil
+2026-09-18T15:49:08  Messung +20 °C (bezug) beginnt: 20 × 20 s ein / 160 s aus, ca. 57 min
