@@ -36,6 +36,8 @@ HOST = os.environ.get("KLIMA_HOST", "172.168.225.202")
 PORT = int(os.environ.get("KLIMA_PORT", "2049"))
 SEP = "\xb6"
 T_MIN, T_MAX = -72.0, 40.0          # chamber limit -72 C; upper bound kept low for these tests
+RF_MIN, RF_MAX = 0.0, 90.0          # humidity setpoint; the chamber only controls it above about +10 C
+RF_T_MIN = 5.0                      # below this air temperature a humidity setpoint above 0 is refused
 STATUS_RUNNING, STATUS_WARNING, STATUS_ALARM = 2, 4, 8
 ERRORS = {-5: "unbekannter Befehl", -6: "falsche Parameter", -8: "Lesefehler"}
 NTFY_FILE = Path.home() / ".klima_ntfy"
@@ -74,11 +76,12 @@ class Chamber:
     def value(self, cmd, *params):
         return float(self.query(cmd, *params)[0].replace(",", "."))
 
-    def actual(self):
-        return self.value(11004, 1)
+    def actual(self, groesse=1):
+        """Measured value of control variable 1 = temperature, 2 = humidity."""
+        return self.value(11004, groesse)
 
-    def setpoint(self):
-        return self.value(11002, 1)
+    def setpoint(self, groesse=1):
+        return self.value(11002, groesse)
 
     def status(self):
         return int(self.value(10012))
@@ -92,8 +95,8 @@ class Chamber:
                 pass
         return None
 
-    def set_setpoint(self, t):
-        self.query(11001, 1, f"{t:.1f}")
+    def set_setpoint(self, t, groesse=1):
+        self.query(11001, groesse, f"{t:.1f}")
 
     def start_manual(self):
         self.query(14001, 1, 1)
@@ -182,6 +185,24 @@ def set_setpoint(a, k):
             print("WARNUNG: Die Kammer läuft nicht. Am Panel starten oder erneut mit --start.")
 
 
+def set_humidity(a, k):
+    """Humidity setpoint (control variable 2). Above 0 %rF only when the chamber is warm:
+    below the dew point the chamber cannot control humidity and the evaporator ices up."""
+    if not RF_MIN <= a.soll <= RF_MAX:
+        sys.exit(f"Feuchte-Sollwert {a.soll:g} %rF liegt außerhalb {RF_MIN:g} … {RF_MAX:g} %rF.")
+    ist_t, alt = k.actual(), k.setpoint(2)
+    if a.soll > 0 and ist_t < RF_T_MIN:
+        sys.exit(f"Kammer steht bei {ist_t:+.1f} °C; Feuchte über 0 %rF erst ab {RF_T_MIN:g} °C setzen.")
+    print(f"Kammer: {ist_t:+.1f} °C, Feuchte ist {k.actual(2):.1f} %rF, soll {alt:.1f} %rF")
+    if not a.ja and input(f"Feuchte-Sollwert auf {a.soll:g} %rF setzen? [j/N] ").strip().lower() != "j":
+        sys.exit("Nicht gesetzt.")
+    k.set_setpoint(a.soll, 2)
+    neu = k.setpoint(2)
+    if abs(neu - a.soll) > 0.5:
+        sys.exit(f"Kammer meldet Feuchte-Sollwert {neu:.1f} %rF statt {a.soll:g} %rF. Am Panel prüfen.")
+    print(f"Feuchte-Sollwert gesetzt: {neu:.1f} %rF")
+
+
 def open_log(a):
     if a.ohne_log:
         return None
@@ -261,6 +282,9 @@ def main():
     ap.add_argument("--laeufe", type=Path, default=RUNS_DIR, help=argparse.SUPPRESS)   # tests only
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Temperatur, Sollwert und Status lesen, ändert nichts")
+    fe = sub.add_parser("feuchte", help="Feuchte-Sollwert setzen (nur im warmen Bereich regelbar)")
+    fe.add_argument("soll", type=float, help="Feuchte-Sollwert in %%rF, 0 = Feuchtebetrieb aus")
+    fe.add_argument("--ja", action="store_true", help="ohne Rückfrage setzen")
     for name, text in (("soll", "Sollwert setzen"),
                        ("stufe", "Sollwert setzen, warten, halten, melden"),
                        ("warten", "warten, halten, melden, ohne den Sollwert zu setzen")):
@@ -284,6 +308,8 @@ def main():
     try:
         if a.command == "status":
             show_status(a, k)
+        elif a.command == "feuchte":
+            set_humidity(a, k)
         elif a.command == "soll":
             set_setpoint(a, k)
         elif a.command == "stufe":

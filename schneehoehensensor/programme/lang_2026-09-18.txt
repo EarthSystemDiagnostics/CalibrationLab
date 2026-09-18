@@ -1,0 +1,19 @@
+# Langzeitlauf MB7574, Fr 18.09.2026 ca. 14:00 bis Mo früh, trocken (Feuchte-Soll 0 %rF).
+# Fragen: (1) Fehlstarts bei -70 °C: wie häufig, ab welcher Verweildauer, reversibel?
+#         (2) reicht eine kurze Messung (6 s) oder braucht der Sensor Anlauf?
+#         (3) kühlt der Sensor in der Pause wirklich auf Kammertemperatur zurück?
+#             Dafür drei Tastverhältnisse bei -70 °C: 20 s EIN je 180 s, je 600 s und je 1200 s.
+#         (4) Drift über 20 h bei -70 °C, Bezug +20 °C mit 2 bzw. 3 h Haltezeit davor und danach
+#         (5) R0500 bei -50 °C mit 40 Kaltstarts
+# Aufruf: ./programm --plan programme/lang_2026-09-18.txt --neu --personen ... --seriennummer MB7574-01
+#
+# soll[:tag]      stabil_min  zyklen  ein_s  aus_s     feuchte
+20:bezug          120         20      20     160       0
+-50               30          40      20     160       -
+-70:kurz6s        60          60      6      174       -
+-70:dauer         0           180     20     160,580   -
+-70:pause20min    0           20      20     1180      -
+-70:lang60s       0           20      60     300       -
+20:warm           120         20      20     160       -
+-70:zyk           60          100     20     160,580   -
+20:ende           180         20      20     160       -

@@ -1,0 +1,376 @@
+---
+title: "Kammerlauf MB7574 — Auswertung"
+format:
+  html:
+    toc: true
+    fig-width: 9
+    fig-height: 5
+    embed-resources: true
+params:
+  lauf: ""          # Laufordner; leer = der neueste unter laeufe/
+  bezug_tag: "warm1"  # Stufe, die als Bezugsabstand dient
+execute:
+  echo: false
+  warning: false
+---
+
+```{r setup}
+Sys.setenv(TZ = "Europe/Berlin")   # Logs tragen lokale Zeit ohne Zonenangabe
+library(data.table)
+library(ggplot2)
+theme_set(theme_bw(base_size = 11))
+
+wurzel <- normalizePath(file.path(dirname(rstudioapi_safe <- getwd()), "laeufe"), mustWork = FALSE)
+if (!dir.exists(wurzel)) wurzel <- normalizePath("../laeufe", mustWork = TRUE)
+lauf <- if (nzchar(params$lauf)) {
+  if (dir.exists(params$lauf)) params$lauf else file.path(wurzel, params$lauf)
+} else {
+  sort(list.dirs(wurzel, recursive = FALSE))  |> tail(1)
+}
+stopifnot(dir.exists(lauf))
+```
+
+Lauf: **`r basename(lauf)`**, ausgewertet am `r format(Sys.time(), "%d.%m.%Y %H:%M")`.
+
+```{r einlesen}
+STEUER <- "[[:cntrl:]ÿ]"
+
+lies_stufe <- function(datei) {
+  zeilen <- readLines(datei, warn = FALSE, encoding = "UTF-8")
+  kopf <- zeilen[1]
+  soll <- as.numeric(sub(".*Soll ([-+0-9.]+) .C.*", "\\1", kopf))
+  tag  <- sub(".*Tag '([^']*)'.*", "\\1", kopf)
+  ein_s <- as.numeric(sub(".*Zyklen je ([0-9.]+) s ein.*", "\\1", kopf))
+  d <- fread(text = zeilen[!startsWith(zeilen, "#")], sep = "\t", header = FALSE,
+             col.names = c("zeit", "t_s", "zyklus", "phase", "zeile"),
+             colClasses = c("character", "numeric", "integer", "character", "character"))
+  d[, zeile := gsub(STEUER, "", zeile)]
+  d[, `:=`(datei = basename(datei), soll_C = soll, tag = tag, ein_s = ein_s,
+           zeit = as.POSIXct(zeit, format = "%Y-%m-%dT%H:%M:%OS", tz = "Europe/Berlin"))]
+  # Zeit seit dem Einschalten des Netzteils im jeweiligen Zyklus
+  ein <- d[grepl("Netzteil EIN", zeile), .(t_ein = t_s[1]), by = zyklus]
+  d <- ein[d, on = "zyklus"]
+  d[, t_on := t_s - t_ein]
+  d
+}
+
+dateien <- list.files(lauf, pattern = "_T[-+0-9]", full.names = TRUE)
+dateien <- grep("_klima_|_programm_", dateien, value = TRUE, invert = TRUE)
+roh <- rbindlist(lapply(dateien, lies_stufe), fill = TRUE)
+
+# Messwerte und Netzteilablesungen trennen
+werte <- roh[grepl("^R[0-9]{4}$", zeile)]
+werte[, mm := as.integer(sub("R", "", zeile))]
+werte[, art := fifelse(mm >= 5000, "R5000", fifelse(mm <= 500, "R0500", "gueltig"))]
+werte[, n_in_zyklus := seq_len(.N), by = .(datei, zyklus)]
+
+strom <- roh[grepl("^# Netzteil [0-9]", zeile)]
+strom[, `:=`(volt = as.numeric(sub("# Netzteil ([0-9.]+) V.*", "\\1", zeile)),
+             mA   = as.numeric(sub(".* ([0-9.]+) mA", "\\1", zeile)))]
+
+# Stufenreihenfolge nach Startzeit
+stufen <- werte[, .(start = min(zeit), soll_C = soll_C[1], tag = tag[1],
+                    zyklen = uniqueN(zyklus), ein_s = ein_s[1]), by = datei][order(start)]
+stufen[, name := paste0(sprintf("%+g", soll_C), ifelse(nzchar(tag), paste0(" ", tag), ""))]
+stufen[, nr := .I]
+werte <- stufen[, .(datei, name, nr)][werte, on = "datei"]
+strom <- stufen[, .(datei, name, nr)][strom, on = "datei"]
+setorder(werte, nr, zyklus, t_s)
+lab <- stufen$name; names(lab) <- stufen$name
+werte[, name := factor(name, levels = stufen$name)]
+strom[, name := factor(name, levels = stufen$name)]
+
+gueltig <- werte[art == "gueltig"]
+# Kammertemperatur je Stufe (Mittel während der Messung)
+klima <- rbindlist(lapply(list.files(lauf, pattern = "_klima_T", full.names = TRUE), function(f) {
+  z <- readLines(f, warn = FALSE)
+  z <- z[!startsWith(z, "#")]
+  if (!length(z)) return(NULL)
+  d <- fread(text = z, sep = "\t", header = FALSE, fill = TRUE, colClasses = "character")
+  setnames(d, seq_len(min(6, ncol(d))), c("zeit", "ist", "soll", "status", "fehler", "phase")[seq_len(min(6, ncol(d)))])
+  d[, .(zeit = as.POSIXct(zeit, format = "%Y-%m-%dT%H:%M:%OS", tz = "Europe/Berlin"), ist = suppressWarnings(as.numeric(ist)),
+        phase = if ("phase" %in% names(d)) phase else NA_character_)]
+}), fill = TRUE)[!is.na(ist)]
+
+zeiten <- werte[, .(von = min(zeit), bis = max(zeit)), by = .(nr, datei)]
+luft <- zeiten[, {
+  k <- klima[zeit >= von & zeit <= bis, ist]
+  .(luft_C = if (length(k)) mean(k) else NA_real_)
+}, by = .(nr, datei)]
+stufen <- luft[, .(datei, luft_C)][stufen, on = "datei"]
+```
+
+## 1. Überblick
+
+```{r tabelle}
+je_zyklus <- gueltig[, .(erster = as.numeric(mm[1]), median = as.numeric(median(mm)), n = .N,
+                         letzter = as.numeric(mm[.N])), by = .(nr, name, datei, zyklus)]
+ueb <- je_zyklus[, .(Zyklen = .N,
+                     `erster Wert, Median` = as.numeric(median(erster)),
+                     `erster Wert, SD` = round(sd(erster), 1),
+                     `erster Wert, MAD` = round(mad(erster), 1),
+                     `Spanne erster Wert` = paste(range(erster), collapse = "–")),
+                 by = .(nr, name)]
+ueb <- stufen[, .(nr, `Luft °C` = round(luft_C, 1), `EIN s` = ein_s)][ueb, on = "nr"]
+ausf <- werte[, .(R5000 = sum(art == "R5000"), R0500 = sum(art == "R0500"), Werte = .N), by = nr]
+knitr::kable(ausf[ueb, on = "nr"][order(nr), .(Stufe = name, `Luft °C`, `EIN s`, Zyklen, Werte, R5000, R0500,
+                                               `erster Wert, Median`, `erster Wert, SD`, `erster Wert, MAD`,
+                                               `Spanne erster Wert`)])
+```
+
+```{r kammer-verlauf, fig.height=3.5}
+if (nrow(klima)) {
+  ggplot(klima, aes(zeit, ist)) +
+    geom_line(linewidth = 0.3) +
+    geom_point(data = je_zyklus[, .(zeit = min(werte[datei == .BY$datei, zeit])), by = .(datei, name)][
+      klima[, .(zeit, ist)], on = "zeit", roll = "nearest", nomatch = 0],
+      aes(zeit, ist), colour = "firebrick", size = 1.6) +
+    labs(x = NULL, y = "Kammer, ist °C", title = "Temperaturverlauf, rot: Beginn der Messstufen")
+}
+```
+
+## 2. Wie gut sind die ersten Messungen?
+
+Der erste Wert kommt etwa 0,5 s nach dem Einschalten, der zweite 0,2 s später; danach
+läuft die Selbstreinigung. Verglichen wird, wie stark der erste Wert von Kaltstart zu
+Kaltstart streut (Wiederholbarkeit) und wie weit er vom späteren Verlauf abweicht.
+
+```{r erste-werte, fig.height=4.5}
+erste <- gueltig[n_in_zyklus <= 2, .(mm, n_in_zyklus, t_on, zyklus, name, nr)]
+ggplot(erste, aes(factor(n_in_zyklus), mm)) +
+  geom_boxplot(outlier.size = 0.7) +
+  facet_wrap(~name, scales = "free_y") +
+  labs(x = "Messung Nr. im Kaltstart", y = "mm", title = "Die ersten beiden Werte je Kaltstart")
+```
+
+```{r erste-differenz}
+paare <- dcast(gueltig[n_in_zyklus <= 2], nr + name + zyklus ~ n_in_zyklus, value.var = "mm")
+setnames(paare, c("1", "2"), c("w1", "w2"), skip_absent = TRUE)
+if ("w2" %in% names(paare)) {
+  paare[, d := w2 - w1]
+  knitr::kable(paare[, .(`Paare` = .N, `Differenz Median` = median(d, na.rm = TRUE),
+                         `|Differenz| max` = max(abs(d), na.rm = TRUE),
+                         `SD der Differenz` = round(sd(d, na.rm = TRUE), 2)), by = .(Stufe = name)])
+}
+```
+
+```{r streuung-kaltstarts, fig.height=4}
+ggplot(je_zyklus, aes(zyklus, erster)) +
+  geom_line(linewidth = 0.3, colour = "grey50") + geom_point(size = 0.8) +
+  facet_wrap(~name, scales = "free") +
+  labs(x = "Kaltstart Nr.", y = "erster Wert, mm", title = "Erster Wert über die Kaltstarts einer Stufe")
+```
+
+## 3. Was bringt längeres Messen?
+
+Für jeden Kaltstart wird der Mittelwert der ersten *n* Werte gebildet. Sinkt die
+Streuung über die Kaltstarts mit *n*, lohnt längeres Messen; steigt der Mittelwert
+systematisch an, überwiegt die Eigenerwärmung.
+
+```{r mittel-n, fig.height=4.5}
+maxn <- min(12, gueltig[, .N, by = .(datei, zyklus)][, min(N)])
+mn <- rbindlist(lapply(seq_len(maxn), function(n)
+  gueltig[n_in_zyklus <= n, .(n = n, mittel = mean(mm)), by = .(nr, name, zyklus)]))
+zus <- mn[, .(SD = sd(mittel), bias = mean(mittel) - mean(mn[n == 1 & nr == .BY$nr, mittel])),
+          by = .(nr, name, n)]
+ggplot(zus, aes(n, SD, colour = name)) + geom_line() + geom_point(size = 0.9) +
+  labs(x = "Mittel über die ersten n Werte", y = "SD über die Kaltstarts, mm",
+       colour = NULL, title = "Streuung gegen Mittelungslänge")
+ggplot(zus, aes(n, bias, colour = name)) + geom_line() + geom_point(size = 0.9) +
+  labs(x = "Mittel über die ersten n Werte", y = "Verschiebung gegen n = 1, mm",
+       colour = NULL, title = "Systematische Verschiebung durch Eigenerwärmung")
+```
+
+```{r verlauf-in-phase, fig.height=4.5}
+verlauf <- gueltig[, .(mm = median(mm), n = .N), by = .(nr, name, n_in_zyklus,
+                                                        t_bin = round(t_on, 1))]
+erst <- verlauf[, .(basis = mm[which.min(t_bin)]), by = .(nr, name)]
+verlauf <- erst[verlauf, on = c("nr", "name")]
+ggplot(verlauf[n >= 3], aes(t_bin, mm - basis, colour = name)) +
+  geom_line() + geom_point(size = 0.8) +
+  labs(x = "s nach dem Einschalten", y = "Abweichung vom ersten Wert, mm", colour = NULL,
+       title = "Verlauf innerhalb der EIN-Phase (Median über alle Kaltstarts)")
+```
+
+## 3b. Anlauf: Verlauf innerhalb eines Kaltstarts
+
+Bezug ist hier der späte Teil desselben Kaltstarts (Messung 8 und später). So zeigt sich,
+wie weit die frühen Werte davon abweichen und ab wann ein Kaltstart stabil ist.
+
+```{r anlauf-vorbereitung}
+kalt <- copy(gueltig)
+kalt[, mm := as.numeric(mm)]
+kalt[, spaet := median(mm[n_in_zyklus >= 8]), by = .(datei, zyklus)]
+kalt[, abw := mm - spaet]
+stabil <- kalt[, {
+  ok <- abs(abw) <= 3
+  i <- which(rev(cumprod(rev(as.integer(ok)))) == 1)[1]
+  .(ab = as.numeric(if (is.na(i)) NA else n_in_zyklus[i]),
+    t = as.numeric(if (is.na(i)) NA else t_on[i]))
+}, by = .(nr, name, zyklus)]
+```
+
+```{r anlauf-profil, fig.height=4.5}
+ggplot(kalt[n_in_zyklus <= 12], aes(n_in_zyklus, abw, group = interaction(datei, zyklus))) +
+  geom_line(alpha = 0.25, linewidth = 0.3) +
+  stat_summary(aes(group = 1), fun = median, geom = "line", colour = "firebrick", linewidth = 0.8) +
+  coord_cartesian(ylim = c(-30, 30)) +
+  facet_wrap(~name) +
+  labs(x = "Messung Nr. im Kaltstart", y = "Abweichung vom späten Teil, mm",
+       title = "Anlauf je Kaltstart, rot: Median (Ausschnitt ±30 mm)")
+```
+
+```{r anlauf-voll, fig.height=4.5}
+ggplot(kalt[n_in_zyklus <= 12], aes(n_in_zyklus, abw, group = interaction(datei, zyklus))) +
+  geom_line(alpha = 0.3, linewidth = 0.3) + facet_wrap(~name, scales = "free_y") +
+  labs(x = "Messung Nr. im Kaltstart", y = "Abweichung vom späten Teil, mm",
+       title = "Dasselbe ohne Ausschnitt: die großen Fehlstarts")
+```
+
+```{r anlauf-sd, fig.height=4}
+sdk <- kalt[n_in_zyklus <= 12, .(SD = sd(mm), MAD = mad(mm), n = .N), by = .(name, n_in_zyklus)]
+ggplot(melt(sdk, id.vars = c("name", "n_in_zyklus"), measure.vars = c("SD", "MAD")),
+       aes(n_in_zyklus, value, colour = variable)) +
+  geom_line() + geom_point(size = 0.8) + facet_wrap(~name, scales = "free_y") +
+  labs(x = "Messung Nr. im Kaltstart", y = "Streuung über die Kaltstarts, mm", colour = NULL,
+       title = "Streuung je Position: SD gegen robustes MAD")
+```
+
+```{r anlauf-stabil, fig.height=3.8}
+ggplot(stabil[!is.na(t)], aes(name, t)) +
+  geom_boxplot(outlier.size = 0.7) + coord_flip() +
+  labs(x = NULL, y = "s nach dem Einschalten",
+       title = "Ab wann bleibt ein Kaltstart innerhalb ±3 mm bis zum Ende?")
+```
+
+```{r anlauf-aus-zeit, fig.height=3.5}
+ab <- kalt[grepl("abkling", name) & n_in_zyklus == 1][order(zyklus)]
+if (nrow(ab) > 2) {
+  ab[, aus_davor := c(NA, head(parse_aus <- as.numeric(strsplit("10,20,40,80,160,320,640", ",")[[1]]), .N - 1))]
+  ggplot(ab[!is.na(aus_davor)], aes(aus_davor, mm)) +
+    geom_point(size = 2) + scale_x_log10() +
+    labs(x = "AUS-Zeit vor dem Kaltstart, s (log)", y = "erster Wert, mm",
+         title = "Hängt der erste Wert von der Pause davor ab?")
+}
+```
+
+## 4. Rauschen von Messung zu Messung
+
+```{r rauschen}
+gueltig[, d1 := c(NA, diff(mm)), by = .(datei, zyklus)]
+rausch <- gueltig[!is.na(d1) & t_on > 5, .(`Punkt-zu-Punkt SD (mm)` = round(sd(d1) / sqrt(2), 2),
+                                           `|Sprung| max (mm)` = max(abs(d1)), N = .N),
+                  by = .(Stufe = name)]
+knitr::kable(rausch)
+```
+
+```{r rauschen-plot, fig.height=4}
+ggplot(gueltig[!is.na(d1)], aes(name, d1)) +
+  geom_boxplot(outlier.size = 0.5) + coord_flip() +
+  labs(x = NULL, y = "Differenz zur vorigen Messung, mm", title = "Punkt-zu-Punkt-Differenzen")
+```
+
+## 5. Ausreißer ganzer Messungen
+
+Neben R5000 und R0500 kommen Werte vor, die deutlich unter dem Niveau ihres Zyklus
+liegen, also ein anderes Echo. Als Ausreißer zählt hier ein Wert, der mehr als 3 % vom
+Median seines Zyklus abweicht.
+
+```{r ausreisser}
+gueltig[, zyklus_median := median(mm), by = .(datei, zyklus)]
+gueltig[, ausreisser := abs(mm / zyklus_median - 1) > 0.03]
+knitr::kable(gueltig[, .(Werte = .N, Ausreißer = sum(ausreisser),
+                         `Anteil %` = round(100 * mean(ausreisser), 1),
+                         `Kaltstarts mit Ausreißer` = uniqueN(zyklus[ausreisser]),
+                         Kaltstarts = uniqueN(zyklus),
+                         `kleinster Wert` = min(mm)), by = .(Stufe = name)])
+```
+
+```{r ausreisser-verlauf, fig.height=4}
+ggplot(gueltig, aes(zeit, mm, colour = ausreisser)) +
+  geom_point(size = 0.5) +
+  scale_colour_manual(values = c("grey30", "firebrick"), guide = "none") +
+  facet_wrap(~name, scales = "free") +
+  labs(x = NULL, y = "mm", title = "Alle gültigen Werte, rot: Abweichung > 3 % vom Zyklusmedian")
+```
+
+```{r ausreisser-anteil-zyklus, fig.height=3.5}
+ggplot(gueltig[, .(anteil = 100 * mean(ausreisser)), by = .(name, zyklus)],
+       aes(zyklus, anteil)) +
+  geom_col(width = 0.8) + facet_wrap(~name, scales = "free_x") +
+  labs(x = "Kaltstart Nr.", y = "Ausreißer je Kaltstart, %",
+       title = "Verteilung der Ausreißer über die Kaltstarts")
+```
+
+## 6. Drift und Alterung
+
+Innerhalb einer Stufe zeigt die Steigung des ersten Werts über die Kaltstarts, ob sich
+etwas langsam verändert (Angleichen der Sensortemperatur, Reif, Alterung).
+
+```{r drift-je-stufe}
+fit <- je_zyklus[, {
+  if (.N >= 6) {
+    m <- lm(erster ~ zyklus)
+    ci <- confint(m)[2, ]
+    .(`Steigung mm/Kaltstart` = round(coef(m)[2], 3), `CI unten` = round(ci[1], 3),
+      `CI oben` = round(ci[2], 3), Kaltstarts = .N)
+  } else .(`Steigung mm/Kaltstart` = NA_real_, `CI unten` = NA_real_, `CI oben` = NA_real_, Kaltstarts = .N)
+}, by = .(Stufe = name)]
+knitr::kable(fit)
+```
+
+```{r drift-lang, fig.height=4}
+lang <- je_zyklus[, .N, by = .(nr, name)][N >= 40, nr]
+if (length(lang)) {
+  ggplot(je_zyklus[nr %in% lang], aes(zyklus, erster)) +
+    geom_point(size = 0.8) + geom_smooth(method = "lm", formula = y ~ x, linewidth = 0.4) +
+    facet_wrap(~name, scales = "free") +
+    labs(x = "Kaltstart Nr.", y = "erster Wert, mm", title = "Lange Stufen: Drift über Stunden")
+}
+```
+
+## 7. Temperaturkompensation
+
+Aus dem ersten Wert und der Kammerluft folgt die Temperatur, mit der der Sensor
+gerechnet hat: `T_benutzt = T_Luft · (d_aus / d_bezug)²`, mit dem Bezugsabstand aus der
+Stufe `r params$bezug_tag`.
+
+```{r kompensation, fig.height=4}
+bez <- je_zyklus[grepl(params$bezug_tag, name), median(erster)]
+komp <- stufen[je_zyklus[, .(erster = median(erster)), by = .(nr, name)], on = "nr"]
+komp[, T_benutzt := (luft_C + 273.15) * (erster / bez)^2 - 273.15]
+knitr::kable(komp[order(nr), .(Stufe = name, `Luft °C` = round(luft_C, 1),
+                               `erster Wert mm` = erster, `T_benutzt °C` = round(T_benutzt, 1),
+                               `Differenz K` = round(T_benutzt - luft_C, 1))])
+ggplot(komp, aes(luft_C, T_benutzt, label = name)) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2, colour = "grey50") +
+  geom_point() + geom_text(hjust = -0.1, size = 3) +
+  labs(x = "Kammerluft °C", y = "vom Sensor benutzte Temperatur °C",
+       title = "Kompensation gegen Lufttemperatur (Winkelhalbierende = ideal)")
+```
+
+## 8. Nahbereichs-Echos R0500
+
+```{r r0500, fig.height=4}
+nah <- werte[art == "R0500"]
+if (nrow(nah)) {
+  ggplot(nah, aes(t_on, zyklus, colour = name)) + geom_point() +
+    labs(x = "s nach dem Einschalten", y = "Kaltstart Nr.", colour = NULL,
+         title = "Wann treten R0500 auf?")
+  } else cat("Keine R0500 in diesem Lauf.\n")
+```
+
+## 9. Strom
+
+Die Ablesungen des Netzteils haben 10 mA Auflösung; in den ersten 12 s wird alle 0,5 s
+gelesen. Median, Mittel und Maximum unterscheiden sich, weil der Strom im Messtakt
+einbricht.
+
+```{r strom, fig.height=4}
+knitr::kable(strom[, .(Ablesungen = .N, `Median mA` = median(mA), `Mittel mA` = round(mean(mA), 1),
+                       `p90 mA` = quantile(mA, 0.9), `Max mA` = max(mA),
+                       `Anteil < 80 mA` = round(mean(mA < 80), 3)), by = .(Stufe = name)])
+ggplot(strom[t_on > 0], aes(t_on, mA, colour = name)) +
+  geom_point(size = 0.6, alpha = 0.5) +
+  labs(x = "s nach dem Einschalten", y = "mA", colour = NULL, title = "Strom über die EIN-Phase")
+```

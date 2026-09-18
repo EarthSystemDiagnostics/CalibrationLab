@@ -35,11 +35,14 @@ class SimServ(socketserver.BaseRequestHandler):
                     s["ist"] += max(-5.0, min(5.0, s["soll"] - s["ist"]))
                     answer = f"{s['ist']:.1f}"
                 else:
-                    answer = "40.0"
+                    answer = "40.0"                      # Feuchte-Istwert
             elif cmd == "11002":
-                answer = f"{s['soll']:.1f}" if args[0] == "1" else "50.0"
+                answer = f"{s['soll']:.1f}" if args[0] == "1" else f"{s['feuchte']:.1f}"
             elif cmd == "11001":
-                s["soll"] = float(args[1])
+                if args[0] == "1":
+                    s["soll"] = float(args[1])
+                else:
+                    s["feuchte"] = float(args[1])
             elif cmd == "10012":
                 answer = str(s["status"])
             elif cmd == "14001":
@@ -52,7 +55,7 @@ class SimServ(socketserver.BaseRequestHandler):
 def start_sim(status=3, soll=20.0, ist=20.0):
     srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), SimServ)
     srv.daemon_threads = True
-    srv.state = {"soll": soll, "ist": ist, "status": status, "lock": threading.Lock()}
+    srv.state = {"soll": soll, "ist": ist, "feuchte": 0.0, "status": status, "lock": threading.Lock()}
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -150,6 +153,19 @@ def test_ntfy_sent_with_curl():
         os.environ["PATH"] = old
     sent = (bin_dir / "curl.log").read_text().splitlines()
     assert "Title: Stufe messen" in sent and "-70 °C seit 30 min" in sent and "https://ntfy.sh/test-thema" in sent, sent
+
+
+def test_humidity_setpoint_written_and_refused_when_cold():
+    srv = start_sim(soll=20.0, ist=20.0)
+    r = klima(srv.server_address[1], "feuchte", "70", "--ja")
+    assert r.returncode == 0 and "Feuchte-Sollwert gesetzt: 70.0" in r.stdout, r.stdout + r.stderr
+    assert srv.state["feuchte"] == 70.0
+    srv.shutdown()
+
+    srv = start_sim(soll=-40.0, ist=-40.0)
+    r = klima(srv.server_address[1], "feuchte", "70", "--ja")
+    srv.shutdown()
+    assert r.returncode != 0 and "erst ab" in r.stderr and srv.state["feuchte"] == 0.0, r.stderr
 
 
 def test_no_connection_is_reported():

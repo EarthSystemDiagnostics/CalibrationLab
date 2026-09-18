@@ -115,8 +115,8 @@ def test_stability_timer_restarts_outside_tolerance():
     temps = iter([-39.5, -39.8, -42.0] + [-40.0] * 100)      # overshoot after first reaching
 
     class Chamber:
-        actual = staticmethod(lambda: next(temps))
-        setpoint = staticmethod(lambda: -40.0)
+        actual = staticmethod(lambda groesse=1: next(temps) if groesse == 1 else 40.0)
+        setpoint = staticmethod(lambda groesse=1: -40.0)
         status = staticmethod(lambda: 3)
 
     events = []
@@ -126,7 +126,8 @@ def test_stability_timer_restarts_outside_tolerance():
     with open(log_path, "w") as log:
         mod.wait_stable(a, Chamber, step, log, events.append)
     assert [e.split(" ")[0] for e in events] == ["-40", "Toleranz", "-40"], events
-    assert log_path.read_text().splitlines()[0].endswith("\twarten")
+    zeile = log_path.read_text().splitlines()[0].split("\t")
+    assert zeile[5] == "warten" and zeile[6] == "40.0", zeile
 
 
 def test_plan_file_steps_hold_and_off_time_list():
@@ -156,9 +157,30 @@ def test_plan_file_steps_hold_and_off_time_list():
     offs = [float(l.split("\t")[1]) for l in step_log if "Netzteil AUS (automatisch)" in l]
     gaps = [round(on - off, 1) for off, on in zip(offs, ons[1:])]
     assert len(gaps) == 2 and abs(gaps[0] - 0.5) < 0.3 and abs(gaps[1] - 1.0) < 0.3, gaps
-    phases = [l.rsplit("\t", 1)[-1] for f in lauf.glob("*_klima_T-10_*.txt")
+    zeilen = [l.split("\t") for f in lauf.glob("*_klima_T-10_*.txt")
               for l in f.read_text().splitlines() if not l.startswith("#")]
-    assert "warten" in phases and "messen" in phases, phases
+    assert {z[5] for z in zeilen} == {"warten", "messen"}, zeilen[:3]
+    assert all(z[6] == "40.0" for z in zeilen), zeilen[:3]      # Feuchte-Istwert des Simulators
+
+
+def test_humidity_set_and_refused_when_cold():
+    # warme Stufe setzt die Feuchte, kalte Stufe mit Feuchte > 0 bricht ab
+    srv, supply, sensor, stop = hardware(soll=20.0, ist=20.0)
+    laeufe = Path(tempfile.mkdtemp(prefix="programm_"))
+    plan = laeufe / "plan.txt"
+    plan.write_text("20:feucht  0.02  2  1.5  0.5  70\n")
+    r = subprocess.run(args(srv, supply, sensor, laeufe, "--plan", str(plan)) + FAST + ["--neu"],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0 and "Feuchte-Sollwert 70 %rF gesetzt" in r.stdout, r.stdout + r.stderr
+    assert srv.state["feuchte"] == 70.0, srv.state
+
+    stop.set(); srv.shutdown()
+    srv, supply, sensor, stop = hardware(soll=-40.0, ist=-40.0)
+    plan.write_text("-40:feucht  0.02  2  1.5  0.5  70\n")
+    r = subprocess.run(args(srv, supply, sensor, laeufe, "--plan", str(plan)) + FAST,
+                       capture_output=True, text=True, timeout=120)
+    stop.set(); srv.shutdown()
+    assert r.returncode == 1 and "abgelehnt" in r.stdout, r.stdout + r.stderr
 
 
 def test_bad_plan_file_refused():

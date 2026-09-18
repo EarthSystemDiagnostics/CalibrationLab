@@ -1,0 +1,14 @@
+# Reifversuch MB7574, im Anschluss an den Langzeitlauf, ca. 7 h.
+# Frage: Sind die Fehlstarts bei -70 °C und die R0500 bei -50 °C eine Folge von Reif auf dem
+# Wandler? Dazu wird der Sensor im Warmen befeuchtet und dann abgekühlt; die Kammer regelt
+# Feuchte nur im warmen Bereich, deshalb steht der Feuchte-Sollwert ab der ersten kalten Stufe
+# wieder auf 0 %rF. Vergleichsmaßstab sind dieselben Stufen aus dem trockenen Langzeitlauf.
+# Aufruf: ./programm --plan programme/reif_2026-09-21.txt   (in den laufenden Laufordner)
+#
+# soll[:tag]      stabil_min  zyklen  ein_s  aus_s   feuchte
+20:trocken        30          20      20     160     0
+20:feucht80       45          20      20     160     80
+-40:reif          30          20      20     160     0
+-50:reif          30          20      20     160     -
+-70:reif          30          20      20     160     -
+20:auftau         60          20      20     160     -

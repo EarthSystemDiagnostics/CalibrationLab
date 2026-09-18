@@ -14,12 +14,15 @@ after another holding time.
 
 Plan file (--plan): one step per line, '#' starts a comment, columns separated by blanks:
 
-    # soll[:tag]   stabil_min  zyklen  ein_s  aus_s
+    # soll[:tag]   stabil_min  zyklen  ein_s  aus_s   feuchte_%rF
     -50:abkling    0           8       20     10,20,40,80,160,320,640
     -70:dauer      30          120     20     160
+    20:feucht      30          0      -       -       80
     20:auftau      60          0
 
 Missing columns or '-' take the command-line values (--stabil, --zyklen, --ein, --aus).
+The last column sets the humidity setpoint before the step; the chamber controls humidity only
+in the warm range, so a value above 0 %rF is refused below +5 C air temperature.
 stabil 0 measures as soon as the chamber is within the tolerance; zyklen 0 only holds.
 A list of off-times applies cycle by cycle.
 
@@ -47,8 +50,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ex355p import EX355P, SupplyError, DEFAULT_PORT as PSU_PORT, DEFAULT_BAUD as PSU_BAUD   # noqa: E402
-from klimakammer import (HOST, PORT, T_MIN, T_MAX, STATUS_RUNNING, STATUS_ALARM, Chamber,   # noqa: E402
-                         SimServError, default_ntfy, hm, notify, rate_per_min, running_text)
+from klimakammer import (HOST, PORT, T_MIN, T_MAX, RF_MIN, RF_MAX, RF_T_MIN, STATUS_RUNNING,   # noqa: E402
+                         STATUS_ALARM, Chamber, SimServError, default_ntfy, hm, notify,
+                         rate_per_min, running_text)
 from mb7574_kammerlog import (RUNS_DIR, find_port, parse_off_times, pick_run, port_users,   # noqa: E402
                               stop_on_sigterm)
 
@@ -80,20 +84,23 @@ def read_plan(path, a):
         if not cols:
             continue
         m = STEP.match(cols[0])
-        if not m or len(cols) > 5:
-            raise ProgrammeError(f"{path}, Zeile {n}: erwartet 'soll[:tag] stabil zyklen ein aus': {raw.strip()}")
-        cols += ["-"] * (5 - len(cols))
+        if not m or len(cols) > 6:
+            raise ProgrammeError(f"{path}, Zeile {n}: erwartet 'soll[:tag] stabil zyklen ein aus feuchte': {raw.strip()}")
+        cols += ["-"] * (6 - len(cols))
         try:
             step = {"soll": float(m.group(1)), "tag": m.group(2) or "",
                     "stabil": a.stabil if cols[1] == "-" else float(cols[1]),
                     "zyklen": a.zyklen if cols[2] == "-" else int(cols[2]),
                     "ein": a.ein if cols[3] == "-" else float(cols[3]),
-                    "aus": a.aus if cols[4] == "-" else cols[4]}
+                    "aus": a.aus if cols[4] == "-" else cols[4],
+                    "feuchte": None if cols[5] == "-" else float(cols[5])}
             times = parse_off_times(step["aus"])
         except ValueError:
             raise ProgrammeError(f"{path}, Zeile {n}: keine Zahl: {raw.strip()}") from None
         if step["stabil"] < 0 or step["zyklen"] < 0 or step["ein"] <= 0 or not times or min(times) < 0:
             raise ProgrammeError(f"{path}, Zeile {n}: Werte außerhalb des Bereichs: {raw.strip()}")
+        if step["feuchte"] is not None and not RF_MIN <= step["feuchte"] <= RF_MAX:
+            raise ProgrammeError(f"{path}, Zeile {n}: Feuchte außerhalb {RF_MIN:g}…{RF_MAX:g} %rF: {raw.strip()}")
         steps.append(step)
     if not steps:
         raise ProgrammeError(f"{path}: keine Stufen")
@@ -194,8 +201,9 @@ def set_chamber(a, k, t, journal):
 def open_chamber_log(a, run, s):
     path = run / f"{run.name}_klima_T{s['soll']:+g}_{time.strftime('%H%M%S')}.txt"
     log = open(path, "w")
-    log.write(f"# Klimakammer {a.host}, Soll {s['soll']:+g} °C, Toleranz {a.toleranz:g} K, stabil {s['stabil']:g} min "
-              "(Messprogramm; phase warten/messen)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\tphase\n")
+    log.write(f"# Klimakammer {a.host}, Soll {s['soll']:+g} °C, Toleranz {a.toleranz:g} K, stabil {s['stabil']:g} min"
+              + (f", Feuchte-Soll {s['feuchte']:g} %rF" if s.get("feuchte") is not None else "")
+              + " (Messprogramm; phase warten/messen)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\tphase\trF\n")
     log.flush()
     return log
 
@@ -206,12 +214,32 @@ def poll(k, log, phase):
     try:
         ist, soll, st = k.actual(), k.setpoint(), k.status()
     except (SimServError, ValueError, IndexError) as e:
-        log.write(f"{stamp}\t\t\t\t{e}\t{phase}\n")
+        log.write(f"{stamp}\t\t\t\t{e}\t{phase}\t\n")
         log.flush()
         return None
-    log.write(f"{stamp}\t{ist:.2f}\t{soll:.2f}\t{st}\t\t{phase}\n")
+    try:
+        rf = f"{k.actual(2):.1f}"
+    except (SimServError, ValueError, IndexError):
+        rf = ""
+    log.write(f"{stamp}\t{ist:.2f}\t{soll:.2f}\t{st}\t\t{phase}\t{rf}\n")
     log.flush()
     return ist, soll, st
+
+
+def set_humidity(a, k, s, journal):
+    """Humidity setpoint of a step. Above 0 %rF only in the warm range: below the dew point the
+    chamber cannot control humidity and the evaporator ices up."""
+    ziel = s["feuchte"]
+    ist_t = patiently(a, "Temperatur lesen", k.actual)
+    if ziel > 0 and ist_t < RF_T_MIN:
+        raise ProgrammeError(f"Feuchte {ziel:g} %rF bei {ist_t:+.1f} °C abgelehnt (erst ab {RF_T_MIN:g} °C)")
+    if abs(patiently(a, "Feuchte-Sollwert lesen", lambda: k.setpoint(2)) - ziel) <= 0.5:
+        return
+    patiently(a, "Feuchte setzen", lambda: k.set_setpoint(ziel, 2))
+    neu = patiently(a, "Feuchte-Sollwert lesen", lambda: k.setpoint(2))
+    if abs(neu - ziel) > 0.5:
+        raise ProgrammeError(f"Kammer meldet Feuchte-Sollwert {neu:.1f} %rF statt {ziel:g} %rF")
+    journal(f"Feuchte-Sollwert {ziel:g} %rF gesetzt")
 
 
 class ChamberWatch(threading.Thread):
@@ -405,8 +433,8 @@ def main():
         ap.error("entweder Temperaturen oder --plan, nicht beides")
     try:
         steps = (read_plan(a.plan, a) if a.plan else
-                 [{"soll": t, "tag": tag, "stabil": a.stabil, "zyklen": a.zyklen, "ein": a.ein, "aus": a.aus}
-                  for t, tag in cli_steps])
+                 [{"soll": t, "tag": tag, "stabil": a.stabil, "zyklen": a.zyklen, "ein": a.ein,
+                   "aus": a.aus, "feuchte": None} for t, tag in cli_steps])
     except (ProgrammeError, OSError) as e:
         sys.exit(str(e))
     if not steps:
@@ -427,6 +455,8 @@ def main():
     for i, s in enumerate(steps, 1):
         what = (f"{s['zyklen']} × {s['ein']:g} s ein / {s['aus']} s aus, Messung ca. {step_minutes(s):.0f} min"
                 if s["zyklen"] else "nur halten")
+        if s.get("feuchte") is not None:
+            what = what + f", Feuchte {s['feuchte']:g} %rF"
         print(f"  {i:2d}. {step_name(s):<22} stabil {s['stabil']:g} min, {what}")
     total = sum(s["stabil"] + step_minutes(s) for s in steps) / 60
     print(f"Summe Haltezeiten und Messungen: {total:.1f} h, dazu die Kammerfahrten")
@@ -454,6 +484,8 @@ def main():
             journal(f"Stufe {i}/{len(steps)}: {step_name(s)}")
             if abs(patiently(a, "Sollwert lesen", k.setpoint) - s["soll"]) > 0.05:
                 set_chamber(a, k, s["soll"], journal)
+            if s.get("feuchte") is not None:
+                set_humidity(a, k, s, journal)
             with open_chamber_log(a, run, s) as log:
                 wait_stable(a, k, s, log, journal)
                 nxt = f" Weiter mit {step_name(steps[i])}." if i < len(steps) else ""
