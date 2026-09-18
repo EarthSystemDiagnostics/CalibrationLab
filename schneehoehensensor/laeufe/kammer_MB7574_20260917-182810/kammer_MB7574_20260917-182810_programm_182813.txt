@@ -37,3 +37,10 @@
 2026-09-18T01:24:44  Kammer-Sollwert -70 °C gesetzt
 2026-09-18T01:30:15  -70 °C erreicht (ist -69.2), Messung um 02:00, wenn stabil
 2026-09-18T02:00:23  Messung -70 °C (dauer) beginnt: 80 × 20 s ein / 160 s aus, ca. 237 min
+2026-09-18T05:58:05    Strom laut Netzteil: 110 mA (Median aus 475 Ablesungen ab 10 s nach EIN, Auflösung 10 mA)
+2026-09-18T05:58:05    Median Zyklus 1 (Kaltstart) 986 mm, Anstieg bis Zyklus 80: -3 mm
+2026-09-18T05:58:05    keine Auffälligkeit
+2026-09-18T05:58:05  Stufe 7/10: +20 °C (warm2)
+2026-09-18T05:58:06  Kammer-Sollwert +20 °C gesetzt
+2026-09-18T06:18:43  +20 °C erreicht (ist +19.1), Messung um 06:48, wenn stabil
+2026-09-18T06:48:51  Messung +20 °C (warm2) beginnt: 20 × 20 s ein / 160 s aus, ca. 57 min
