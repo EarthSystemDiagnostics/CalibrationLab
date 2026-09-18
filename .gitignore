@@ -28,3 +28,8 @@ __pycache__/
 .Rhistory
 .RData
 .Rproj.user/
+
+# erzeugte Auswertungen (mit quarto render neu zu erzeugen)
+*.html
+Rplots.pdf
+*_files/
