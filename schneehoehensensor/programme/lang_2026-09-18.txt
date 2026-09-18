@@ -1,4 +1,6 @@
-# Langzeitlauf MB7574, Fr 18.09.2026 ca. 14:00 bis Mo früh, trocken (Feuchte-Soll 0 %rF).
+# Langzeitlauf MB7574, Fr 18.09.2026 ca. 14:00 bis Mo früh, trocken.
+# Der Feuchte-Sollwert wird NICHT gesetzt (Spalte leer): Feuchtebetrieb erst, wenn ein
+# Techniker vor Ort ist (Wasserversorgung, erstmaliger Schreibzugriff auf Regelgröße 2).
 # Fragen: (1) Fehlstarts bei -70 °C: wie häufig, ab welcher Verweildauer, reversibel?
 #         (2) reicht eine kurze Messung (6 s) oder braucht der Sensor Anlauf?
 #         (3) kühlt der Sensor in der Pause wirklich auf Kammertemperatur zurück?
@@ -8,7 +10,7 @@
 # Aufruf: ./programm --plan programme/lang_2026-09-18.txt --neu --personen ... --seriennummer MB7574-01
 #
 # soll[:tag]      stabil_min  zyklen  ein_s  aus_s     feuchte
-20:bezug          120         20      20     160       0
+20:bezug          120         20      20     160       -
 -50               30          40      20     160       -
 -70:kurz6s        60          60      6      174       -
 -70:dauer         0           180     20     160,580   -
