@@ -183,6 +183,26 @@ def test_humidity_set_and_refused_when_cold():
     assert r.returncode == 1 and "abgelehnt" in r.stdout, r.stdout + r.stderr
 
 
+def test_logs_survive_file_replacement():
+    # git checkout waehrend eines Laufs ersetzt Dateien; die Logs muessen weiterschreiben
+    spec = importlib.util.spec_from_file_location("programm", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    d = Path(tempfile.mkdtemp(prefix="programm_"))
+    j = mod.Journal(d / "journal.txt")
+    j("erste Zeile")
+    (d / "journal.txt").unlink()                  # wie ein git checkout: Datei ersetzt
+    (d / "journal.txt").write_text("von git\n")
+    j("zweite Zeile")
+    assert (d / "journal.txt").read_text().splitlines()[-1].endswith("zweite Zeile")
+
+    log = mod.ChamberLog(d / "klima.txt")
+    log.write("a\n")
+    (d / "klima.txt").write_text("von git\n")
+    log.write("b\n")
+    assert (d / "klima.txt").read_text() == "von git\nb\n"
+
+
 def test_bad_plan_file_refused():
     plan = Path(tempfile.mkdtemp(prefix="programm_")) / "plan.txt"
     plan.write_text("-40  30  x  20  10\n")

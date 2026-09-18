@@ -119,22 +119,22 @@ def step_minutes(s):
 
 
 class Journal:
-    """Event lines on the terminal and in the programme log."""
+    """Event lines on the terminal and in the programme log. The file is opened per line:
+    a git checkout during a push replaces the file, and a handle kept open would keep
+    writing into the replaced inode (seen 18.09.2026)."""
 
     def __init__(self, path):
         self.path = path
-        self.f = open(path, "a") if path else None
 
     def __call__(self, text):
         line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')}  {text}"
         print(line, flush=True)
-        if self.f:
-            self.f.write(line + "\n")
-            self.f.flush()
+        if self.path:
+            with open(self.path, "a") as f:
+                f.write(line + "\n")
 
     def close(self):
-        if self.f:
-            self.f.close()
+        pass
 
 
 def preflight(a, k):
@@ -198,13 +198,33 @@ def set_chamber(a, k, t, journal):
         journal("Handbetrieb gestartet")
 
 
+class ChamberLog:
+    """Chamber readings, opened per line for the same reason as Journal."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def write(self, text):
+        with open(self.path, "a") as f:
+            f.write(text)
+
+    def flush(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 def open_chamber_log(a, run, s):
     path = run / f"{run.name}_klima_T{s['soll']:+g}_{time.strftime('%H%M%S')}.txt"
-    log = open(path, "w")
+    path.write_text("")
+    log = ChamberLog(path)
     log.write(f"# Klimakammer {a.host}, Soll {s['soll']:+g} °C, Toleranz {a.toleranz:g} K, stabil {s['stabil']:g} min"
               + (f", Feuchte-Soll {s['feuchte']:g} %rF" if s.get("feuchte") is not None else "")
               + " (Messprogramm; phase warten/messen)\n# zeit\tist_C\tsoll_C\tstatus\tfehler\tphase\trF\n")
-    log.flush()
     return log
 
 
