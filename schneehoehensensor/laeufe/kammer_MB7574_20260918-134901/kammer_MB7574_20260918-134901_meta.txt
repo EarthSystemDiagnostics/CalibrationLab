@@ -1,0 +1,9 @@
+Experiment       : kammer_MB7574
+Run stamp        : 20260918-134901
+Start (PC time)  : 2026-09-18T13:49:01
+Persons          : Thom
+Sensor           : MaxBotix MB7574
+Serial number    : MB7574-01
+Description      : Langzeit 53 h trocken, drei Tastverhaeltnisse bei -70 C
+Code commit      : 818a9445d0cfa65657dc16e4e87085312104bcd2
+Uncommitted code : no
